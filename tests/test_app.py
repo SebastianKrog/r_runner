@@ -73,7 +73,10 @@ def test_run_script_success_with_artifacts(monkeypatch):
     app.RUNNER_TOKEN = "secret"
     client = TestClient(app.app)
 
+    monkeypatch.setattr(app, "_resolve_docker_bin", lambda: app.RUNNER_DOCKER_BIN)
+
     def fake_run(cmd, cwd, **kwargs):
+        assert cmd[:4] == [app.RUNNER_DOCKER_BIN, "run", "--rm", "--network"]
         Path(cwd, "result.txt").write_text("hello\n", encoding="utf-8")
         Path(cwd, "plot.png").write_bytes(b"\x89PNG\r\n\x1a\n")
         return Mock(returncode=0, stdout="ok\n", stderr="")
@@ -103,8 +106,10 @@ def test_run_script_timeout(monkeypatch):
     app.RUNNER_TOKEN = "secret"
     client = TestClient(app.app)
 
+    monkeypatch.setattr(app, "_resolve_docker_bin", lambda: app.RUNNER_DOCKER_BIN)
+
     def fake_run(*args, **kwargs):
-        raise subprocess.TimeoutExpired(cmd="Rscript", timeout=1)
+        raise subprocess.TimeoutExpired(cmd="docker run", timeout=1)
 
     monkeypatch.setattr(app.subprocess, "run", fake_run)
 
@@ -116,3 +121,64 @@ def test_run_script_timeout(monkeypatch):
 
     assert response.status_code == 408
     assert "timed out" in response.json()["detail"]
+
+
+def test_resolve_docker_bin_falls_back_to_docker_io(monkeypatch):
+    monkeypatch.setattr(app, "RUNNER_DOCKER_BIN", "docker")
+
+    def fake_which(binary):
+        if binary == "docker":
+            return None
+        if binary == "docker.io":
+            return "/usr/bin/docker.io"
+        return None
+
+    monkeypatch.setattr(app, "which", fake_which)
+
+    assert app._resolve_docker_bin() == "/usr/bin/docker.io"
+
+
+def test_run_returns_500_when_container_runtime_unavailable(monkeypatch):
+    app.RUNNER_TOKEN = "secret"
+    client = TestClient(app.app)
+
+    monkeypatch.setattr(app, "RUNNER_DOCKER_BIN", "docker")
+    monkeypatch.setattr(app, "which", lambda _binary: None)
+
+    response = client.post(
+        "/run",
+        headers={"Authorization": "Bearer secret"},
+        json={"script": "print('hello')"},
+    )
+
+    assert response.status_code == 500
+    assert "Container runtime binary is unavailable" in response.json()["detail"]
+
+
+def test_prepare_shared_workdir_root(monkeypatch, tmp_path):
+    monkeypatch.setattr(app, "RUNNER_SHARED_DIR", tmp_path / "shared")
+
+    resolved = app._prepare_shared_workdir_root()
+
+    assert resolved.exists()
+    assert resolved.is_dir()
+
+
+def test_run_returns_500_when_shared_root_unavailable(monkeypatch):
+    app.RUNNER_TOKEN = "secret"
+    client = TestClient(app.app)
+
+    class BrokenPath:
+        def mkdir(self, *args, **kwargs):
+            raise OSError("boom")
+
+    monkeypatch.setattr(app, "RUNNER_SHARED_DIR", BrokenPath())
+
+    response = client.post(
+        "/run",
+        headers={"Authorization": "Bearer secret"},
+        json={"script": "print('hello')"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Shared workdir root is unavailable"

@@ -1,14 +1,17 @@
 # R Runner
 
-Simple token-protected web service that executes posted R scripts inside a container based on `rocker/verse:4.5.2`.
+Token-protected web service that executes posted R scripts in **ephemeral Docker containers**.
+
+- Web API runs in a small Python image.
+- Each `POST /run` request runs in its own R container (sandboxed per request).
 
 ## API
 
 - `GET /health` → health probe
-- `GET /system` → list installed R packages baked into the container
+- `GET /system` → package inventory metadata
 - `POST /run` → execute an R script
 
-### Auth
+## Auth
 
 Set `RUNNER_TOKEN` on the server and send:
 
@@ -16,93 +19,62 @@ Set `RUNNER_TOKEN` on the server and send:
 Authorization: Bearer <RUNNER_TOKEN>
 ```
 
-### Request
+## Runtime images
 
-```json
-{
-  "script": "print(summary(cars)); png('plot.png'); plot(cars); dev.off()"
-}
-```
+- `Dockerfile` → web API image (`r-runner-web`)
+- `Dockerfile.r-base` → tiny R image for CI request execution checks
+- `Dockerfile.r-full` → full R image (analytics/modeling packages) for deployment/runtime
 
-### Response
+The API uses `RUNNER_SCRIPT_IMAGE` to select the script runtime image.
 
-```json
-{
-  "success": true,
-  "exit_code": 0,
-  "stdout": "...",
-  "stderr": "",
-  "artifacts": [
-    {
-      "filename": "plot.png",
-      "mime_type": "image/png",
-      "encoding": "base64",
-      "content": "iVBORw0KGgo..."
-    }
-  ]
-}
-```
-
-Artifacts are files created by the script in the temp working directory. Text files are returned as UTF-8, binary as base64.
-
-
-The image installs additional analytics/modeling packages via `pak` and writes a package inventory to `/app/system/r-packages.txt` during build for the `/system` endpoint.
-
-## Run with Docker
+## Local run
 
 ```bash
-docker build -t r-runner .
-docker run --rm -p 8000:8000 -e RUNNER_TOKEN=supersecret r-runner
+docker build -f Dockerfile -t r-runner-web .
+docker build -f Dockerfile.r-base -t r-runner-r-base .
+docker run --rm -p 8000:8000 \
+  -e RUNNER_TOKEN=supersecret \
+  -e RUNNER_SCRIPT_IMAGE=r-runner-r-base \
+  -e PUBLIC_BASE_URL=http://localhost:8000 \
+  -e RUNNER_SHARED_DIR=/tmp/r-runner-shared \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /tmp/r-runner-shared:/tmp/r-runner-shared \
+  r-runner-web
 ```
 
-## Example call
+## Docker Compose
 
-```bash
-curl -X POST http://localhost:8000/run \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer supersecret' \
-  -d '{"script":"print(mean(cars$speed)); png(\"plot.png\"); plot(cars); dev.off()"}'
+`compose.yaml` expects these values in `.env`:
+
+```env
+RUNNER_TOKEN=replace-me
+WEB_IMAGE=ghcr.io/your-org/r-runner-web:latest
+SCRIPT_IMAGE=ghcr.io/your-org/r-runner-r-full:latest
+SITE_DOMAIN=example.com
+PUBLIC_BASE_URL=https://example.com
+RUNNER_SHARED_DIR=/tmp/r-runner-shared
 ```
 
-## Production HTTPS on Hetzner (r.krogmaier.dk)
+- `SITE_DOMAIN` is used by Caddy to select the served host.
+- `PUBLIC_BASE_URL` is used by FastAPI/OpenAPI server metadata.
+- `RUNNER_SHARED_DIR` must be mounted at the same absolute path in the web container and host so script files are visible to Docker-launched runtime containers.
 
-The included `compose.yaml` runs the API behind Caddy, exposing only ports `80` and `443`.
-Caddy obtains and renews a Let's Encrypt certificate for `r.krogmaier.dk` automatically.
+## CI/CD behavior
 
-1. Point DNS `A`/`AAAA` records for `r.krogmaier.dk` to your Hetzner server public IP(s).
-2. Allow inbound `80/tcp` and `443/tcp` in Hetzner Cloud Firewall.
-3. Deploy with Docker Compose (the GitHub deploy workflow already copies `compose.yaml` and `Caddyfile`).
-4. Remove any public `8000` firewall rule; traffic should go through HTTPS only.
+- PR workflow builds `r-runner-r-base` + web image and validates `/health` plus `/run`.
+- Deploy workflow builds/pushes `r-runner-web` and `r-runner-r-full`.
+- Build caches for both R Dockerfiles are stored in GHCR and reused automatically.
+- Deploy checks run with the **full R image** to match runtime behavior.
 
-Smoke tests:
-
-```bash
-curl -I http://r.krogmaier.dk/health
-curl -I https://r.krogmaier.dk/health
-```
-
-## CI/CD Workflows
-
-The repository includes two GitHub Actions workflows:
-
-- **PR startup check** (`.github/workflows/pr-startup-check.yml`): builds the container image and verifies the container serves `GET /health`.
-- **Build and deploy** (`.github/workflows/deploy.yml`): on `main`, builds and pushes image tags (`latest` and commit SHA) to GHCR, then deploys remotely over SSH using `compose.yaml`.
-
-### Required GitHub Secrets
-
-- `DEPLOY_SSH_KEY`: private key used for SSH deployment.
-- `DEPLOY_HOST`: hostname/IP of deployment server.
-- `DEPLOY_USER`: SSH username on deployment server.
-- `RUNNER_TOKEN`: production bearer token used by the API.
-
-Deploy workflow writes `.env` on the server with `RUNNER_TOKEN` and an `IMAGE_NAME` pinned to the pushed commit SHA.
-
-## Notes
-
-Environment variables:
+## Environment variables
 
 - `RUNNER_TOKEN` (required)
+- `RUNNER_SCRIPT_IMAGE` (default `r-runner-r-base:latest`)
+- `RUNNER_DOCKER_BIN` (default `docker`)
+- `PUBLIC_BASE_URL` (default `http://localhost:8000`)
+- `RUNNER_SHARED_DIR` (default `/tmp/r-runner-shared`)
 - `RUN_TIMEOUT_SECONDS` (default `30`)
 - `MAX_SCRIPT_BYTES` (default `500000`)
 - `MAX_ARTIFACT_COUNT` (default `10`)
 - `MAX_ARTIFACT_BYTES` (default `5000000` per artifact)
+- `SITE_DOMAIN` (used by Caddy; set in compose env)

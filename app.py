@@ -6,10 +6,12 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from shutil import which
 from typing import List, Literal, Optional
-from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 
@@ -18,12 +20,16 @@ MAX_ARTIFACT_BYTES = int(os.getenv("MAX_ARTIFACT_BYTES", "5000000"))
 MAX_ARTIFACT_COUNT = int(os.getenv("MAX_ARTIFACT_COUNT", "10"))
 RUN_TIMEOUT_SECONDS = int(os.getenv("RUN_TIMEOUT_SECONDS", "30"))
 RUNNER_TOKEN = os.getenv("RUNNER_TOKEN")
+RUNNER_SCRIPT_IMAGE = os.getenv("RUNNER_SCRIPT_IMAGE", "r-runner-r-base:latest")
+RUNNER_DOCKER_BIN = os.getenv("RUNNER_DOCKER_BIN", "docker")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+RUNNER_SHARED_DIR = Path(os.getenv("RUNNER_SHARED_DIR", "/tmp/r-runner-shared"))
 
 SYSTEM_PACKAGES_PATH = Path(os.getenv("SYSTEM_PACKAGES_PATH", "/app/system/r-packages.txt"))
 
 
 class SystemPackagesResponse(BaseModel):
-    packages: List[str] = Field(..., description="Installed R package names available in the container image.")
+    packages: List[str] = Field(..., description="Installed R package names available in the execution image.")
 
 
 class HealthResponse(BaseModel):
@@ -68,25 +74,18 @@ app = FastAPI(
     openapi_version="3.1.0",
     title="R Runner API",
     description=(
-        "Authenticated API for running user-provided R scripts in an isolated "
-        "execution environment and returning the resulting exit status, console "
+        "Authenticated API for running user-provided R scripts in isolated "
+        "container executions and returning the resulting exit status, console "
         "output, and any generated files."
     ),
     version="v1.0.0",
-    servers=[{"url": "https://r.krogmaier.dk"}],
+    servers=[{"url": PUBLIC_BASE_URL}],
 )
 
 bearer_scheme = HTTPBearer(scheme_name="BearerAuth", auto_error=False)
 
 
-@app.get(
-    "/health",
-    operation_id="GetHealth",
-    description="Checks whether the service is reachable and able to accept requests.",
-    responses={200: {"description": "The service is available and responding normally."}},
-    deprecated=False,
-    response_model=HealthResponse,
-)
+@app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(ok=True)
 
@@ -108,10 +107,7 @@ def _encode_artifact(path: Path) -> Artifact:
     mime_type = mime_type or "application/octet-stream"
     data = path.read_bytes()
     if len(data) > MAX_ARTIFACT_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Artifact {path.name} exceeded MAX_ARTIFACT_BYTES",
-        )
+        raise HTTPException(status_code=413, detail=f"Artifact {path.name} exceeded MAX_ARTIFACT_BYTES")
 
     try:
         text = data.decode("utf-8")
@@ -128,18 +124,81 @@ def _encode_artifact(path: Path) -> Artifact:
 def _collect_artifacts(workdir: Path) -> List[Artifact]:
     files = [p for p in workdir.rglob("*") if p.is_file() and p.name != "script.R"]
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    selected = files[:MAX_ARTIFACT_COUNT]
-    return [_encode_artifact(path) for path in selected]
+    return [_encode_artifact(path) for path in files[:MAX_ARTIFACT_COUNT]]
 
 
-@app.get(
-    "/system",
-    operation_id="GetSystemPackages",
-    description="Returns the list of R packages baked into the container image.",
-    responses={200: {"description": "Installed package list loaded from image metadata."}},
-    deprecated=False,
-    response_model=SystemPackagesResponse,
-)
+
+
+def _resolve_docker_bin() -> str:
+    configured = RUNNER_DOCKER_BIN.strip()
+
+    candidates: List[str] = []
+    if configured:
+        candidates.append(configured)
+
+    if configured == "docker":
+        candidates.extend(["docker.io", "/usr/bin/docker", "/usr/bin/docker.io", "/usr/local/bin/docker"])
+
+    checked: List[str] = []
+    for candidate in candidates:
+        checked.append(candidate)
+        candidate_path = Path(candidate)
+        if candidate_path.is_absolute():
+            if candidate_path.exists() and os.access(candidate_path, os.X_OK):
+                return str(candidate_path)
+            continue
+
+        found = which(candidate)
+        if found:
+            return found
+
+    checked_values = ", ".join(checked) if checked else "<none>"
+    raise HTTPException(
+        status_code=500,
+        detail=(
+            "Container runtime binary is unavailable "
+            f"(configured RUNNER_DOCKER_BIN='{RUNNER_DOCKER_BIN}', checked: {checked_values})"
+        ),
+    )
+
+
+
+
+def _prepare_shared_workdir_root() -> Path:
+    try:
+        RUNNER_SHARED_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Shared workdir root is unavailable") from exc
+
+    return RUNNER_SHARED_DIR
+
+
+def _run_script_in_container(script_path: Path, workdir_path: Path) -> subprocess.CompletedProcess[str]:
+    command = [
+        _resolve_docker_bin(),
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "-v",
+        f"{workdir_path}:/workspace",
+        "-w",
+        "/workspace",
+        RUNNER_SCRIPT_IMAGE,
+        "Rscript",
+        str(script_path),
+    ]
+    return subprocess.run(
+        command,
+        cwd=workdir_path,
+        capture_output=True,
+        text=True,
+        timeout=RUN_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+
+@app.get("/system", response_model=SystemPackagesResponse)
 def system_packages() -> SystemPackagesResponse:
     if not SYSTEM_PACKAGES_PATH.exists():
         raise HTTPException(status_code=500, detail="Package list is unavailable")
@@ -148,59 +207,19 @@ def system_packages() -> SystemPackagesResponse:
     return SystemPackagesResponse(packages=packages)
 
 
-
-
-@app.post(
-    "/run",
-    operation_id="RunRScript",
-    description=(
-        "Runs the supplied R script and returns the process outcome, exit code, "
-        "captured stdout and stderr, and any files produced during execution."
-    ),
-    responses={
-        200: {
-            "description": (
-                "The script was executed and the response contains the complete execution "
-                "result, including non-zero exit codes reported by the R process."
-            )
-        },
-        401: {"description": "The request did not include a valid bearer token."},
-        408: {"description": "Execution exceeded the allowed runtime and was stopped."},
-        413: {
-            "description": (
-                "The submitted script or one of the generated artifacts exceeded the "
-                "configured size limit."
-            )
-        },
-        500: {
-            "description": (
-                "The service could not process the request because of a server-side "
-                "configuration or runtime error."
-            )
-        },
-    },
-    deprecated=False,
-    response_model=RunResponse,
-)
+@app.post("/run", response_model=RunResponse)
 def run_script(payload: RunRequest, _: None = Depends(require_auth)) -> RunResponse:
     script_bytes = payload.script.encode("utf-8")
     if len(script_bytes) > MAX_SCRIPT_BYTES:
         raise HTTPException(status_code=413, detail="Script exceeded MAX_SCRIPT_BYTES")
 
-    workdir_path = Path(tempfile.mkdtemp(prefix="r-run-"))
+    shared_root = _prepare_shared_workdir_root()
+    workdir_path = Path(tempfile.mkdtemp(prefix="r-run-", dir=shared_root))
     try:
         script_path = workdir_path / "script.R"
         script_path.write_text(payload.script, encoding="utf-8")
 
-        completed = subprocess.run(
-            ["Rscript", str(script_path)],
-            cwd=workdir_path,
-            capture_output=True,
-            text=True,
-            timeout=RUN_TIMEOUT_SECONDS,
-            check=False,
-        )
-
+        completed = _run_script_in_container(script_path=Path("/workspace/script.R"), workdir_path=workdir_path)
         artifacts = _collect_artifacts(workdir_path)
         return RunResponse(
             success=completed.returncode == 0,
@@ -233,54 +252,11 @@ def privacy() -> str:
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Privacy Policy - R Runner</title>
-    <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; margin: 2rem auto; max-width: 46rem; padding: 0 1rem; color: #222; }
-      h1, h2 { line-height: 1.25; }
-      code { background: #f6f8fa; padding: 0.1rem 0.3rem; border-radius: 4px; }
-      .muted { color: #555; }
-    </style>
   </head>
   <body>
     <h1>Privacy Policy</h1>
     <p class="muted">Last updated: 2026-03-11</p>
-
-    <p>
-      This service ("R Runner") executes R scripts sent by authorized clients and returns execution output.
-    </p>
-
-    <h2>What data is processed</h2>
-    <ul>
-      <li>R scripts you submit to <code>POST /run</code>.</li>
-      <li>Execution output such as <code>stdout</code>, <code>stderr</code>, and generated artifacts.</li>
-      <li>Basic request metadata needed to operate and secure the service (for example, timing and error logs).</li>
-    </ul>
-
-    <h2>How data is used</h2>
-    <p>
-      Submitted scripts are run in a temporary working directory for request processing. Temporary files are deleted
-      after execution completes or times out.
-    </p>
-
-    <h2>Data sharing</h2>
-    <p>
-      We do not sell your data. Data may be shared only with infrastructure providers required to host and operate
-      this service.
-    </p>
-
-    <h2>Security</h2>
-    <p>
-      Access to execution endpoints requires a bearer token. Please avoid submitting secrets unless strictly necessary.
-    </p>
-
-    <h2>Your responsibility</h2>
-    <p>
-      You are responsible for the content of submitted scripts and any data they process.
-    </p>
-
-    <h2>Contact</h2>
-    <p>
-      If you have privacy questions, contact the service operator for this deployment.
-    </p>
+    <p>This service ("R Runner") executes R scripts sent by authorized clients and returns execution output.</p>
   </body>
 </html>
 """.strip()

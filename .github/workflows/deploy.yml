@@ -16,7 +16,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      image_name: ${{ steps.image.outputs.image_name }}
+      web_image: ${{ steps.image.outputs.web_image }}
+      script_image: ${{ steps.image.outputs.r_full_image }}
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -25,8 +26,12 @@ jobs:
         id: image
         run: |
           repo_lower="${GITHUB_REPOSITORY,,}"
-          echo "image_name=ghcr.io/${repo_lower}" >> "$GITHUB_OUTPUT"
-          echo "cache_image=ghcr.io/${repo_lower}:buildcache" >> "$GITHUB_OUTPUT"
+          echo "web_image=ghcr.io/${repo_lower}-web" >> "$GITHUB_OUTPUT"
+          echo "r_full_image=ghcr.io/${repo_lower}-r-full" >> "$GITHUB_OUTPUT"
+          echo "r_base_image=ghcr.io/${repo_lower}-r-base" >> "$GITHUB_OUTPUT"
+          echo "web_cache=ghcr.io/${repo_lower}:cache-web" >> "$GITHUB_OUTPUT"
+          echo "r_full_cache=ghcr.io/${repo_lower}:cache-r-full" >> "$GITHUB_OUTPUT"
+          echo "r_base_cache=ghcr.io/${repo_lower}:cache-r-base" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -38,35 +43,90 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Build image with shared cache
+      - name: Build web image
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile
           load: true
           tags: |
-            ${{ steps.image.outputs.image_name }}:latest
-            ${{ steps.image.outputs.image_name }}:${{ github.sha }}
-          cache-from: type=registry,ref=${{ steps.image.outputs.cache_image }}
-          cache-to: type=registry,ref=${{ steps.image.outputs.cache_image }},mode=max
+            ${{ steps.image.outputs.web_image }}:latest
+            ${{ steps.image.outputs.web_image }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ steps.image.outputs.web_cache }}
+          cache-to: type=registry,ref=${{ steps.image.outputs.web_cache }},mode=max
 
-      - name: Run startup check container
+      - name: Build full R image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.r-full
+          load: true
+          tags: |
+            ${{ steps.image.outputs.r_full_image }}:latest
+            ${{ steps.image.outputs.r_full_image }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ steps.image.outputs.r_full_cache }}
+          cache-to: type=registry,ref=${{ steps.image.outputs.r_full_cache }},mode=max
+
+      - name: Warm tiny R cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.r-base
+          load: true
+          tags: ${{ steps.image.outputs.r_base_image }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ steps.image.outputs.r_base_cache }}
+          cache-to: type=registry,ref=${{ steps.image.outputs.r_base_cache }},mode=max
+
+      - name: Run deployment-style check (web + full R image)
         run: |
           docker run -d --name r-runner-startup-check \
             -e RUNNER_TOKEN=ci-token \
+            -e RUNNER_SCRIPT_IMAGE=${{ steps.image.outputs.r_full_image }}:${{ github.sha }} \
+            -e RUNNER_DOCKER_BIN=/usr/bin/docker \
+            -e RUNNER_SHARED_DIR=/tmp/r-runner-shared \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /usr/bin/docker:/usr/bin/docker:ro \
+            -v /tmp/r-runner-shared:/tmp/r-runner-shared \
             -p 8000:8000 \
-            "${{ steps.image.outputs.image_name }}:${{ github.sha }}"
+            "${{ steps.image.outputs.web_image }}:${{ github.sha }}"
 
-          for i in {1..20}; do
+          for i in {1..30}; do
             if curl -fsS http://localhost:8000/health > /tmp/health.json; then
               break
             fi
             sleep 1
           done
 
-          docker logs r-runner-startup-check | tee startup-check.log
+          : > startup-check.log
+          run_ok=0
+          for i in {1..10}; do
+            status_code=$(curl -sS -o /tmp/run.json -w '%{http_code}' -X POST http://localhost:8000/run \
+              -H 'Content-Type: application/json' \
+              -H 'Authorization: Bearer ci-token' \
+              -d '{"script":"cat(2+2)"}')
+            if [ "$status_code" = "200" ] && grep -q '"success":true' /tmp/run.json; then
+              run_ok=1
+              break
+            fi
+            echo "run attempt $i failed with status=$status_code" | tee -a startup-check.log
+            cat /tmp/run.json | tee -a startup-check.log || true
+            echo | tee -a startup-check.log
+            sleep 1
+          done
+
+          if [ "$run_ok" -ne 1 ]; then
+            echo 'Container runtime diagnostics:' | tee -a startup-check.log
+            docker exec r-runner-startup-check sh -lc 'echo PATH=$PATH; ls -l /usr/bin/docker* || true; which docker || true; which docker.io || true; docker --version || true' | tee -a startup-check.log || true
+            echo 'Last /run response payload:' | tee -a startup-check.log
+            cat /tmp/run.json | tee -a startup-check.log || true
+            echo | tee -a startup-check.log
+          fi
+
+          docker logs r-runner-startup-check | tee -a startup-check.log
           docker rm -f r-runner-startup-check
 
           grep -q '"ok":true' /tmp/health.json
+          [ "$run_ok" -eq 1 ]
 
       - name: Upload startup logs on failure
         if: failure() && hashFiles('startup-check.log') != ''
@@ -75,10 +135,12 @@ jobs:
           name: startup-check-log
           path: startup-check.log
 
-      - name: Push image
+      - name: Push images
         run: |
-          docker push "${{ steps.image.outputs.image_name }}:latest"
-          docker push "${{ steps.image.outputs.image_name }}:${{ github.sha }}"
+          docker push "${{ steps.image.outputs.web_image }}:latest"
+          docker push "${{ steps.image.outputs.web_image }}:${{ github.sha }}"
+          docker push "${{ steps.image.outputs.r_full_image }}:latest"
+          docker push "${{ steps.image.outputs.r_full_image }}:${{ github.sha }}"
 
   deploy:
     runs-on: ubuntu-latest
@@ -101,7 +163,10 @@ jobs:
         run: |
           cat > deploy.env <<'EOF'
           RUNNER_TOKEN=${{ secrets.RUNNER_TOKEN }}
-          IMAGE_NAME=${{ needs.build.outputs.image_name }}:${{ github.sha }}
+          WEB_IMAGE=${{ needs.build.outputs.web_image }}:${{ github.sha }}
+          SCRIPT_IMAGE=${{ needs.build.outputs.script_image }}:${{ github.sha }}
+          SITE_DOMAIN=${{ secrets.SITE_DOMAIN }}
+          PUBLIC_BASE_URL=https://${{ secrets.SITE_DOMAIN }}
           EOF
 
       - name: Copy runtime files to server
