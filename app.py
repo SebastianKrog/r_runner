@@ -130,19 +130,35 @@ def _collect_artifacts(workdir: Path) -> List[Artifact]:
 
 def _resolve_docker_bin() -> str:
     configured = RUNNER_DOCKER_BIN.strip()
+
+    candidates: List[str] = []
     if configured:
-        if Path(configured).is_absolute() and Path(configured).exists():
-            return configured
-        found = which(configured)
+        candidates.append(configured)
+
+    if configured == "docker":
+        candidates.extend(["docker.io", "/usr/bin/docker", "/usr/bin/docker.io", "/usr/local/bin/docker"])
+
+    checked: List[str] = []
+    for candidate in candidates:
+        checked.append(candidate)
+        candidate_path = Path(candidate)
+        if candidate_path.is_absolute():
+            if candidate_path.exists() and os.access(candidate_path, os.X_OK):
+                return str(candidate_path)
+            continue
+
+        found = which(candidate)
         if found:
             return found
 
-    if configured == "docker":
-        fallback = which("docker.io")
-        if fallback:
-            return fallback
-
-    raise HTTPException(status_code=500, detail="Container runtime binary is unavailable")
+    checked_values = ", ".join(checked) if checked else "<none>"
+    raise HTTPException(
+        status_code=500,
+        detail=(
+            "Container runtime binary is unavailable "
+            f"(configured RUNNER_DOCKER_BIN='{RUNNER_DOCKER_BIN}', checked: {checked_values})"
+        ),
+    )
 
 
 def _run_script_in_container(script_path: Path, workdir_path: Path) -> subprocess.CompletedProcess[str]:

@@ -95,6 +95,7 @@ jobs:
             sleep 1
           done
 
+          : > startup-check.log
           run_ok=0
           for i in {1..10}; do
             status_code=$(curl -sS -o /tmp/run.json -w '%{http_code}' -X POST http://localhost:8000/run \
@@ -105,10 +106,19 @@ jobs:
               run_ok=1
               break
             fi
+            echo "run attempt $i failed with status=$status_code" | tee -a startup-check.log
+            cat /tmp/run.json | tee -a startup-check.log || true
             sleep 1
           done
 
-          docker logs "$CONTAINER_NAME" | tee startup-check.log
+          if [ "$run_ok" -ne 1 ]; then
+            echo 'Container runtime diagnostics:' | tee -a startup-check.log
+            docker exec "$CONTAINER_NAME" sh -lc 'echo PATH=$PATH; ls -l /usr/bin/docker* || true; which docker || true; which docker.io || true; docker --version || true' | tee -a startup-check.log || true
+            echo 'Last /run response payload:' | tee -a startup-check.log
+            cat /tmp/run.json | tee -a startup-check.log || true
+          fi
+
+          docker logs "$CONTAINER_NAME" | tee -a startup-check.log
           docker rm -f "$CONTAINER_NAME"
 
           grep -q '"ok":true' /tmp/health.json

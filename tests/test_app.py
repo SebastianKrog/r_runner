@@ -152,4 +152,4 @@ def test_run_returns_500_when_container_runtime_unavailable(monkeypatch):
     )
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "Container runtime binary is unavailable"
+    assert "Container runtime binary is unavailable" in response.json()["detail"]
