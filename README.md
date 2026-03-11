@@ -1,0 +1,85 @@
+# R Runner
+
+Simple token-protected web service that executes posted R scripts inside a container based on `rocker/tidyverse`.
+
+## API
+
+- `GET /health` → health probe
+- `POST /run` → execute an R script
+
+### Auth
+
+Set `RUNNER_TOKEN` on the server and send:
+
+```http
+Authorization: Bearer <RUNNER_TOKEN>
+```
+
+### Request
+
+```json
+{
+  "script": "print(summary(cars)); png('plot.png'); plot(cars); dev.off()"
+}
+```
+
+### Response
+
+```json
+{
+  "success": true,
+  "exit_code": 0,
+  "stdout": "...",
+  "stderr": "",
+  "artifacts": [
+    {
+      "path": "plot.png",
+      "mime_type": "image/png",
+      "encoding": "base64",
+      "content": "iVBORw0KGgo..."
+    }
+  ]
+}
+```
+
+Artifacts are files created by the script in the temp working directory. Text files are returned as UTF-8, binary as base64.
+
+## Run with Docker
+
+```bash
+docker build -t r-runner .
+docker run --rm -p 8000:8000 -e RUNNER_TOKEN=supersecret r-runner
+```
+
+## Example call
+
+```bash
+curl -X POST http://localhost:8000/run \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer supersecret' \
+  -d '{"script":"print(mean(cars$speed)); png(\"plot.png\"); plot(cars); dev.off()"}'
+```
+
+## CI/CD Workflows
+
+The repository includes two GitHub Actions workflows:
+
+- **PR startup check** (`.github/workflows/pr-startup-check.yml`): builds the container image and verifies the container serves `GET /health`.
+- **Build and deploy** (`.github/workflows/deploy.yml`): on `main`, builds and pushes image tags (`latest` and commit SHA) to GHCR, then deploys remotely over SSH using `compose.yaml`.
+
+### Required GitHub Secrets
+
+- `DEPLOY_SSH_KEY`: private key used for SSH deployment.
+- `DEPLOY_HOST`: hostname/IP of deployment server.
+- `DEPLOY_USER`: SSH username on deployment server.
+- `RUNNER_TOKEN`: production bearer token used by the API.
+
+## Notes
+
+Environment variables:
+
+- `RUNNER_TOKEN` (required)
+- `RUN_TIMEOUT_SECONDS` (default `30`)
+- `MAX_SCRIPT_BYTES` (default `500000`)
+- `MAX_ARTIFACT_COUNT` (default `10`)
+- `MAX_ARTIFACT_BYTES` (default `5000000` per artifact)

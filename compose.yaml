@@ -1,0 +1,9 @@
+services:
+  r-runner:
+    container_name: r-runner
+    image: ghcr.io/${IMAGE_REPO:-owner}/r-runner:${IMAGE_TAG:-latest}
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
