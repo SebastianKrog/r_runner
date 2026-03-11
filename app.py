@@ -6,9 +6,9 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import List, Optional
-
+from typing import List, Literal, Optional
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -20,41 +20,79 @@ RUN_TIMEOUT_SECONDS = int(os.getenv("RUN_TIMEOUT_SECONDS", "30"))
 RUNNER_TOKEN = os.getenv("RUNNER_TOKEN")
 
 
+class HealthResponse(BaseModel):
+    ok: bool = Field(..., description="Indicates whether the service reports itself as healthy.")
+
+
 class RunRequest(BaseModel):
-    script: str = Field(..., description="Raw R script to execute")
+    script: str = Field(..., description="The complete R source code to execute.")
 
 
 class Artifact(BaseModel):
-    path: str
-    mime_type: str
-    encoding: str
-    content: str
+    filename: str = Field(..., description="The filename assigned to the generated artifact.")
+    mime_type: str = Field(..., description="The MIME type describing the artifact content.")
+    encoding: Literal["utf-8", "base64"] = Field(
+        ...,
+        description="The encoding used for the artifact content field.",
+    )
+    content: str = Field(
+        ...,
+        description=(
+            "The artifact payload, represented either as plain UTF-8 text or as "
+            "base64-encoded binary data, depending on the encoding field."
+        ),
+    )
 
 
 class RunResponse(BaseModel):
-    success: bool
-    exit_code: int
-    stdout: str
-    stderr: str
-    artifacts: List[Artifact]
+    success: bool = Field(
+        ...,
+        description="True when the R process exits with code 0; false when it exits with a non-zero code.",
+    )
+    exit_code: int = Field(..., description="The exit status returned by the R process.")
+    stdout: str = Field(..., description="All text written to standard output during execution.")
+    stderr: str = Field(..., description="All text written to standard error during execution.")
+    artifacts: List[Artifact] = Field(
+        ...,
+        description="Files produced by the script and captured by the runner for inclusion in the response.",
+    )
 
 
-app = FastAPI(title="R Runner", version="0.1.0")
+app = FastAPI(
+    openapi_version="3.1.0",
+    title="R Runner API",
+    description=(
+        "Authenticated API for running user-provided R scripts in an isolated "
+        "execution environment and returning the resulting exit status, console "
+        "output, and any generated files."
+    ),
+    version="v1.0.0",
+    servers=[{"url": "https://r.krogmaier.dk"}],
+)
+
+bearer_scheme = HTTPBearer(scheme_name="BearerAuth", auto_error=False)
 
 
-@app.get("/health")
-def health() -> dict:
-    return {"ok": True}
+@app.get(
+    "/health",
+    operation_id="GetHealth",
+    description="Checks whether the service is reachable and able to accept requests.",
+    responses={200: {"description": "The service is available and responding normally."}},
+    deprecated=False,
+    response_model=HealthResponse,
+)
+def health() -> HealthResponse:
+    return HealthResponse(ok=True)
 
 
-def require_auth(authorization: Optional[str] = Header(default=None)) -> None:
+def require_auth(credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme)) -> None:
     if not RUNNER_TOKEN:
         raise HTTPException(status_code=500, detail="Server is missing RUNNER_TOKEN")
 
-    if not authorization or not authorization.startswith("Bearer "):
+    if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Missing bearer token")
 
-    token = authorization.removeprefix("Bearer ").strip()
+    token = credentials.credentials.strip()
     if not hmac.compare_digest(token, RUNNER_TOKEN):
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -71,10 +109,10 @@ def _encode_artifact(path: Path) -> Artifact:
 
     try:
         text = data.decode("utf-8")
-        return Artifact(path=path.name, mime_type=mime_type, encoding="utf-8", content=text)
+        return Artifact(filename=path.name, mime_type=mime_type, encoding="utf-8", content=text)
     except UnicodeDecodeError:
         return Artifact(
-            path=path.name,
+            filename=path.name,
             mime_type=mime_type,
             encoding="base64",
             content=base64.b64encode(data).decode("ascii"),
@@ -88,7 +126,38 @@ def _collect_artifacts(workdir: Path) -> List[Artifact]:
     return [_encode_artifact(path) for path in selected]
 
 
-@app.post("/run", response_model=RunResponse)
+@app.post(
+    "/run",
+    operation_id="RunRScript",
+    description=(
+        "Runs the supplied R script and returns the process outcome, exit code, "
+        "captured stdout and stderr, and any files produced during execution."
+    ),
+    responses={
+        200: {
+            "description": (
+                "The script was executed and the response contains the complete execution "
+                "result, including non-zero exit codes reported by the R process."
+            )
+        },
+        401: {"description": "The request did not include a valid bearer token."},
+        408: {"description": "Execution exceeded the allowed runtime and was stopped."},
+        413: {
+            "description": (
+                "The submitted script or one of the generated artifacts exceeded the "
+                "configured size limit."
+            )
+        },
+        500: {
+            "description": (
+                "The service could not process the request because of a server-side "
+                "configuration or runtime error."
+            )
+        },
+    },
+    deprecated=False,
+    response_model=RunResponse,
+)
 def run_script(payload: RunRequest, _: None = Depends(require_auth)) -> RunResponse:
     script_bytes = payload.script.encode("utf-8")
     if len(script_bytes) > MAX_SCRIPT_BYTES:

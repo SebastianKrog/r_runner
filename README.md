@@ -33,7 +33,7 @@ Authorization: Bearer <RUNNER_TOKEN>
   "stderr": "",
   "artifacts": [
     {
-      "path": "plot.png",
+      "filename": "plot.png",
       "mime_type": "image/png",
       "encoding": "base64",
       "content": "iVBORw0KGgo..."
