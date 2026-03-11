@@ -61,7 +61,7 @@ def test_run_script_success_with_artifacts(monkeypatch):
     assert payload["exit_code"] == 0
     assert payload["stdout"] == "ok\n"
 
-    artifacts = {entry["path"]: entry for entry in payload["artifacts"]}
+    artifacts = {entry["filename"]: entry for entry in payload["artifacts"]}
     assert artifacts["result.txt"]["encoding"] == "utf-8"
     assert artifacts["result.txt"]["content"] == "hello\n"
     assert artifacts["plot.png"]["encoding"] == "base64"
