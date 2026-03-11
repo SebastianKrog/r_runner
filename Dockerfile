@@ -8,6 +8,7 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates docker.io \
+    && if [ ! -x /usr/bin/docker ] && [ -x /usr/bin/docker.io ]; then ln -s /usr/bin/docker.io /usr/bin/docker; fi \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

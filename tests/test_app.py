@@ -73,6 +73,8 @@ def test_run_script_success_with_artifacts(monkeypatch):
     app.RUNNER_TOKEN = "secret"
     client = TestClient(app.app)
 
+    monkeypatch.setattr(app, "_resolve_docker_bin", lambda: app.RUNNER_DOCKER_BIN)
+
     def fake_run(cmd, cwd, **kwargs):
         assert cmd[:4] == [app.RUNNER_DOCKER_BIN, "run", "--rm", "--network"]
         Path(cwd, "result.txt").write_text("hello\n", encoding="utf-8")
@@ -104,6 +106,8 @@ def test_run_script_timeout(monkeypatch):
     app.RUNNER_TOKEN = "secret"
     client = TestClient(app.app)
 
+    monkeypatch.setattr(app, "_resolve_docker_bin", lambda: app.RUNNER_DOCKER_BIN)
+
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd="docker run", timeout=1)
 
@@ -117,3 +121,35 @@ def test_run_script_timeout(monkeypatch):
 
     assert response.status_code == 408
     assert "timed out" in response.json()["detail"]
+
+
+def test_resolve_docker_bin_falls_back_to_docker_io(monkeypatch):
+    monkeypatch.setattr(app, "RUNNER_DOCKER_BIN", "docker")
+
+    def fake_which(binary):
+        if binary == "docker":
+            return None
+        if binary == "docker.io":
+            return "/usr/bin/docker.io"
+        return None
+
+    monkeypatch.setattr(app, "which", fake_which)
+
+    assert app._resolve_docker_bin() == "/usr/bin/docker.io"
+
+
+def test_run_returns_500_when_container_runtime_unavailable(monkeypatch):
+    app.RUNNER_TOKEN = "secret"
+    client = TestClient(app.app)
+
+    monkeypatch.setattr(app, "RUNNER_DOCKER_BIN", "docker")
+    monkeypatch.setattr(app, "which", lambda _binary: None)
+
+    response = client.post(
+        "/run",
+        headers={"Authorization": "Bearer secret"},
+        json={"script": "print('hello')"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Container runtime binary is unavailable"

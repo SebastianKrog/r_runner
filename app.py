@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from shutil import which
 from typing import List, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -125,9 +126,28 @@ def _collect_artifacts(workdir: Path) -> List[Artifact]:
     return [_encode_artifact(path) for path in files[:MAX_ARTIFACT_COUNT]]
 
 
+
+
+def _resolve_docker_bin() -> str:
+    configured = RUNNER_DOCKER_BIN.strip()
+    if configured:
+        if Path(configured).is_absolute() and Path(configured).exists():
+            return configured
+        found = which(configured)
+        if found:
+            return found
+
+    if configured == "docker":
+        fallback = which("docker.io")
+        if fallback:
+            return fallback
+
+    raise HTTPException(status_code=500, detail="Container runtime binary is unavailable")
+
+
 def _run_script_in_container(script_path: Path, workdir_path: Path) -> subprocess.CompletedProcess[str]:
     command = [
-        RUNNER_DOCKER_BIN,
+        _resolve_docker_bin(),
         "run",
         "--rm",
         "--network",
