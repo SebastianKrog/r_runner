@@ -93,16 +93,24 @@ jobs:
             sleep 1
           done
 
-          curl -fsS -X POST http://localhost:8000/run \
-            -H 'Content-Type: application/json' \
-            -H 'Authorization: Bearer ci-token' \
-            -d '{"script":"cat(2+2)"}' > /tmp/run.json
+          run_ok=0
+          for i in {1..10}; do
+            status_code=$(curl -sS -o /tmp/run.json -w '%{http_code}' -X POST http://localhost:8000/run \
+              -H 'Content-Type: application/json' \
+              -H 'Authorization: Bearer ci-token' \
+              -d '{"script":"cat(2+2)"}')
+            if [ "$status_code" = "200" ] && grep -q '"success":true' /tmp/run.json; then
+              run_ok=1
+              break
+            fi
+            sleep 1
+          done
 
           docker logs r-runner-startup-check | tee startup-check.log
           docker rm -f r-runner-startup-check
 
           grep -q '"ok":true' /tmp/health.json
-          grep -q '"success":true' /tmp/run.json
+          [ "$run_ok" -eq 1 ]
 
       - name: Upload startup logs on failure
         if: failure() && hashFiles('startup-check.log') != ''
