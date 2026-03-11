@@ -1,10 +1,11 @@
 # R Runner
 
-Simple token-protected web service that executes posted R scripts inside a container based on `rocker/tidyverse`.
+Simple token-protected web service that executes posted R scripts inside a container based on `rocker/verse:4.5.2`.
 
 ## API
 
 - `GET /health` → health probe
+- `GET /system` → list installed R packages baked into the container
 - `POST /run` → execute an R script
 
 ### Auth
@@ -43,6 +44,9 @@ Authorization: Bearer <RUNNER_TOKEN>
 ```
 
 Artifacts are files created by the script in the temp working directory. Text files are returned as UTF-8, binary as base64.
+
+
+The image installs additional analytics/modeling packages via `pak` and writes a package inventory to `/app/system/r-packages.txt` during build for the `/system` endpoint.
 
 ## Run with Docker
 
