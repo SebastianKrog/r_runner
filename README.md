@@ -36,7 +36,9 @@ docker run --rm -p 8000:8000 \
   -e RUNNER_TOKEN=supersecret \
   -e RUNNER_SCRIPT_IMAGE=r-runner-r-base \
   -e PUBLIC_BASE_URL=http://localhost:8000 \
+  -e RUNNER_SHARED_DIR=/tmp/r-runner-shared \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /tmp/r-runner-shared:/tmp/r-runner-shared \
   r-runner-web
 ```
 
@@ -50,10 +52,12 @@ WEB_IMAGE=ghcr.io/your-org/r-runner-web:latest
 SCRIPT_IMAGE=ghcr.io/your-org/r-runner-r-full:latest
 SITE_DOMAIN=example.com
 PUBLIC_BASE_URL=https://example.com
+RUNNER_SHARED_DIR=/tmp/r-runner-shared
 ```
 
 - `SITE_DOMAIN` is used by Caddy to select the served host.
 - `PUBLIC_BASE_URL` is used by FastAPI/OpenAPI server metadata.
+- `RUNNER_SHARED_DIR` must be mounted at the same absolute path in the web container and host so script files are visible to Docker-launched runtime containers.
 
 ## CI/CD behavior
 
@@ -68,6 +72,7 @@ PUBLIC_BASE_URL=https://example.com
 - `RUNNER_SCRIPT_IMAGE` (default `r-runner-r-base:latest`)
 - `RUNNER_DOCKER_BIN` (default `docker`)
 - `PUBLIC_BASE_URL` (default `http://localhost:8000`)
+- `RUNNER_SHARED_DIR` (default `/tmp/r-runner-shared`)
 - `RUN_TIMEOUT_SECONDS` (default `30`)
 - `MAX_SCRIPT_BYTES` (default `500000`)
 - `MAX_ARTIFACT_COUNT` (default `10`)

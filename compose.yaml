@@ -7,8 +7,10 @@ services:
     environment:
       RUNNER_SCRIPT_IMAGE: ${SCRIPT_IMAGE:-ghcr.io/owner/r-runner-r-full:latest}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      RUNNER_SHARED_DIR: ${RUNNER_SHARED_DIR:-/tmp/r-runner-shared}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${RUNNER_SHARED_DIR:-/tmp/r-runner-shared}:${RUNNER_SHARED_DIR:-/tmp/r-runner-shared}
     expose:
       - "8000"
     restart: unless-stopped

@@ -83,8 +83,10 @@ jobs:
             -e RUNNER_TOKEN=ci-token \
             -e RUNNER_SCRIPT_IMAGE=${{ steps.image.outputs.r_full_image }}:${{ github.sha }} \
             -e RUNNER_DOCKER_BIN=/usr/bin/docker \
+            -e RUNNER_SHARED_DIR=/tmp/r-runner-shared \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v /usr/bin/docker:/usr/bin/docker:ro \
+            -v /tmp/r-runner-shared:/tmp/r-runner-shared \
             -p 8000:8000 \
             "${{ steps.image.outputs.web_image }}:${{ github.sha }}"
 

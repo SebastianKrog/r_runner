@@ -153,3 +153,32 @@ def test_run_returns_500_when_container_runtime_unavailable(monkeypatch):
 
     assert response.status_code == 500
     assert "Container runtime binary is unavailable" in response.json()["detail"]
+
+
+def test_prepare_shared_workdir_root(monkeypatch, tmp_path):
+    monkeypatch.setattr(app, "RUNNER_SHARED_DIR", tmp_path / "shared")
+
+    resolved = app._prepare_shared_workdir_root()
+
+    assert resolved.exists()
+    assert resolved.is_dir()
+
+
+def test_run_returns_500_when_shared_root_unavailable(monkeypatch):
+    app.RUNNER_TOKEN = "secret"
+    client = TestClient(app.app)
+
+    class BrokenPath:
+        def mkdir(self, *args, **kwargs):
+            raise OSError("boom")
+
+    monkeypatch.setattr(app, "RUNNER_SHARED_DIR", BrokenPath())
+
+    response = client.post(
+        "/run",
+        headers={"Authorization": "Bearer secret"},
+        json={"script": "print('hello')"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Shared workdir root is unavailable"

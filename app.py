@@ -23,6 +23,7 @@ RUNNER_TOKEN = os.getenv("RUNNER_TOKEN")
 RUNNER_SCRIPT_IMAGE = os.getenv("RUNNER_SCRIPT_IMAGE", "r-runner-r-base:latest")
 RUNNER_DOCKER_BIN = os.getenv("RUNNER_DOCKER_BIN", "docker")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
+RUNNER_SHARED_DIR = Path(os.getenv("RUNNER_SHARED_DIR", "/tmp/r-runner-shared"))
 
 SYSTEM_PACKAGES_PATH = Path(os.getenv("SYSTEM_PACKAGES_PATH", "/app/system/r-packages.txt"))
 
@@ -161,6 +162,17 @@ def _resolve_docker_bin() -> str:
     )
 
 
+
+
+def _prepare_shared_workdir_root() -> Path:
+    try:
+        RUNNER_SHARED_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Shared workdir root is unavailable") from exc
+
+    return RUNNER_SHARED_DIR
+
+
 def _run_script_in_container(script_path: Path, workdir_path: Path) -> subprocess.CompletedProcess[str]:
     command = [
         _resolve_docker_bin(),
@@ -201,7 +213,8 @@ def run_script(payload: RunRequest, _: None = Depends(require_auth)) -> RunRespo
     if len(script_bytes) > MAX_SCRIPT_BYTES:
         raise HTTPException(status_code=413, detail="Script exceeded MAX_SCRIPT_BYTES")
 
-    workdir_path = Path(tempfile.mkdtemp(prefix="r-run-"))
+    shared_root = _prepare_shared_workdir_root()
+    workdir_path = Path(tempfile.mkdtemp(prefix="r-run-", dir=shared_root))
     try:
         script_path = workdir_path / "script.R"
         script_path.write_text(payload.script, encoding="utf-8")
