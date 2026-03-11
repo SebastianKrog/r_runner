@@ -19,7 +19,10 @@ services:
     container_name: r-runner-caddy
     image: caddy:2
     environment:
-      SITE_DOMAIN: ${SITE_DOMAIN:-localhost}
+      SITE_DOMAIN: ${SITE_DOMAIN:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-localhost}
+    command: >
+      /bin/sh -c 'export SITE_DOMAIN="${SITE_DOMAIN:-$PUBLIC_BASE_URL}"; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
     restart: unless-stopped
     depends_on:
       - r-runner
