@@ -160,15 +160,48 @@ jobs:
           ssh -o StrictHostKeyChecking=accept-new "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "mkdir -p /opt/r-runner"
 
       - name: Create env file
+        env:
+          SITE_DOMAIN_SECRET: ${{ secrets.SITE_DOMAIN }}
+          PUBLIC_BASE_URL_SECRET: ${{ secrets.PUBLIC_BASE_URL }}
         run: |
-          cat > deploy.env <<'EOF'
+          site_domain="${SITE_DOMAIN_SECRET:-}"
+          public_base_url="${PUBLIC_BASE_URL_SECRET:-}"
+
+          if [ -z "$site_domain" ] && [ -n "$public_base_url" ]; then
+            site_domain="$(python - "$public_base_url" <<"PY"
+import sys
+from urllib.parse import urlparse
+
+value = sys.argv[1].strip()
+if not value:
+    print("")
+    raise SystemExit(0)
+
+parsed = urlparse(value if "://" in value else f"https://{value}")
+host = parsed.netloc or parsed.path
+print(host.split("/")[0])
+PY
+)"
+          fi
+
+          if [ -z "$site_domain" ]; then
+            echo "Missing deployment domain: set secrets.SITE_DOMAIN or secrets.PUBLIC_BASE_URL" >&2
+            exit 1
+          fi
+
+          if [ -z "$public_base_url" ]; then
+            public_base_url="https://$site_domain"
+          elif [ "$public_base_url" = "$site_domain" ]; then
+            public_base_url="https://$public_base_url"
+          fi
+
+          cat > deploy.env <<EOF
           RUNNER_TOKEN=${{ secrets.RUNNER_TOKEN }}
           WEB_IMAGE=${{ needs.build.outputs.web_image }}:${{ github.sha }}
           SCRIPT_IMAGE=${{ needs.build.outputs.script_image }}:${{ github.sha }}
-          SITE_DOMAIN=${{ secrets.SITE_DOMAIN }}
-          PUBLIC_BASE_URL=https://${{ secrets.SITE_DOMAIN }}
+          SITE_DOMAIN=$site_domain
+          PUBLIC_BASE_URL=$public_base_url
           EOF
-
       - name: Copy runtime files to server
         run: |
           scp -o StrictHostKeyChecking=accept-new compose.yaml Caddyfile deploy.env "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/r-runner/"
