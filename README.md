@@ -60,6 +60,23 @@ curl -X POST http://localhost:8000/run \
   -d '{"script":"print(mean(cars$speed)); png(\"plot.png\"); plot(cars); dev.off()"}'
 ```
 
+## Production HTTPS on Hetzner (r.krogmaier.dk)
+
+The included `compose.yaml` runs the API behind Caddy, exposing only ports `80` and `443`.
+Caddy obtains and renews a Let's Encrypt certificate for `r.krogmaier.dk` automatically.
+
+1. Point DNS `A`/`AAAA` records for `r.krogmaier.dk` to your Hetzner server public IP(s).
+2. Allow inbound `80/tcp` and `443/tcp` in Hetzner Cloud Firewall.
+3. Deploy with Docker Compose (the GitHub deploy workflow already copies `compose.yaml` and `Caddyfile`).
+4. Remove any public `8000` firewall rule; traffic should go through HTTPS only.
+
+Smoke tests:
+
+```bash
+curl -I http://r.krogmaier.dk/health
+curl -I https://r.krogmaier.dk/health
+```
+
 ## CI/CD Workflows
 
 The repository includes two GitHub Actions workflows:

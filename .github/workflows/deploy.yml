@@ -110,7 +110,7 @@ jobs:
 
       - name: Copy runtime files to server
         run: |
-          scp compose.yaml deploy.env "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/r-runner/"
+          scp compose.yaml Caddyfile deploy.env "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/r-runner/"
           ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "mv /opt/r-runner/deploy.env /opt/r-runner/.env"
 
       - name: Deploy on server
@@ -118,7 +118,6 @@ jobs:
           ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
             set -e
             cd /opt/r-runner
-            docker rm -f r-runner || true
             docker compose -f compose.yaml pull
             docker compose -f compose.yaml up -d --remove-orphans
             docker image prune -f
