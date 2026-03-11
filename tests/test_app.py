@@ -16,6 +16,28 @@ def test_health_endpoint():
     assert response.json() == {"ok": True}
 
 
+def test_system_packages_endpoint(monkeypatch, tmp_path):
+    pkg_file = tmp_path / "r-packages.txt"
+    pkg_file.write_text("dplyr\nggplot2\n", encoding="utf-8")
+    monkeypatch.setattr(app, "SYSTEM_PACKAGES_PATH", pkg_file)
+
+    client = TestClient(app.app)
+    response = client.get("/system")
+
+    assert response.status_code == 200
+    assert response.json() == {"packages": ["dplyr", "ggplot2"]}
+
+
+def test_system_packages_endpoint_missing_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(app, "SYSTEM_PACKAGES_PATH", tmp_path / "missing.txt")
+
+    client = TestClient(app.app)
+    response = client.get("/system")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Package list is unavailable"
+
+
 def test_privacy_page():
     client = TestClient(app.app)
     response = client.get("/privacy")

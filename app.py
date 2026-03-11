@@ -19,6 +19,12 @@ MAX_ARTIFACT_COUNT = int(os.getenv("MAX_ARTIFACT_COUNT", "10"))
 RUN_TIMEOUT_SECONDS = int(os.getenv("RUN_TIMEOUT_SECONDS", "30"))
 RUNNER_TOKEN = os.getenv("RUNNER_TOKEN")
 
+SYSTEM_PACKAGES_PATH = Path(os.getenv("SYSTEM_PACKAGES_PATH", "/app/system/r-packages.txt"))
+
+
+class SystemPackagesResponse(BaseModel):
+    packages: List[str] = Field(..., description="Installed R package names available in the container image.")
+
 
 class HealthResponse(BaseModel):
     ok: bool = Field(..., description="Indicates whether the service reports itself as healthy.")
@@ -126,6 +132,24 @@ def _collect_artifacts(workdir: Path) -> List[Artifact]:
     return [_encode_artifact(path) for path in selected]
 
 
+@app.get(
+    "/system",
+    operation_id="GetSystemPackages",
+    description="Returns the list of R packages baked into the container image.",
+    responses={200: {"description": "Installed package list loaded from image metadata."}},
+    deprecated=False,
+    response_model=SystemPackagesResponse,
+)
+def system_packages() -> SystemPackagesResponse:
+    if not SYSTEM_PACKAGES_PATH.exists():
+        raise HTTPException(status_code=500, detail="Package list is unavailable")
+
+    packages = [line.strip() for line in SYSTEM_PACKAGES_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return SystemPackagesResponse(packages=packages)
+
+
+
+
 @app.post(
     "/run",
     operation_id="RunRScript",
@@ -195,7 +219,7 @@ def run_script(payload: RunRequest, _: None = Depends(require_auth)) -> RunRespo
 def root() -> dict:
     return {
         "service": "r-runner",
-        "endpoints": ["GET /", "GET /health", "GET /privacy", "POST /run"],
+        "endpoints": ["GET /", "GET /health", "GET /privacy", "GET /system", "POST /run"],
         "response_format": "JSON with stdout/stderr/exit_code and file artifacts",
     }
 
