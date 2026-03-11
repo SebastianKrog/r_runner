@@ -51,12 +51,12 @@ RUNNER_TOKEN=replace-me
 WEB_IMAGE=ghcr.io/your-org/r-runner-web:latest
 SCRIPT_IMAGE=ghcr.io/your-org/r-runner-r-full:latest
 SITE_DOMAIN=example.com
-PUBLIC_BASE_URL=https://example.com
+PUBLIC_BASE_URL=example.com
 RUNNER_SHARED_DIR=/tmp/r-runner-shared
 ```
 
-- `SITE_DOMAIN` is used by Caddy to select the served host.
-- `PUBLIC_BASE_URL` is used by FastAPI/OpenAPI server metadata.
+- `SITE_DOMAIN` is used by Caddy to select the served host (defaults to `PUBLIC_BASE_URL` when unset).
+- `PUBLIC_BASE_URL` is used by FastAPI/OpenAPI server metadata (set host only, no scheme, when relying on it for `SITE_DOMAIN` fallback).
 - `RUNNER_SHARED_DIR` must be mounted at the same absolute path in the web container and host so script files are visible to Docker-launched runtime containers.
 
 ## CI/CD behavior
