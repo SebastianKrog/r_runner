@@ -74,6 +74,8 @@ The repository includes two GitHub Actions workflows:
 - `DEPLOY_USER`: SSH username on deployment server.
 - `RUNNER_TOKEN`: production bearer token used by the API.
 
+Deploy workflow writes `.env` on the server with `RUNNER_TOKEN` and an `IMAGE_NAME` pinned to the pushed commit SHA.
+
 ## Notes
 
 Environment variables:

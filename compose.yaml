@@ -1,7 +1,7 @@
 services:
   r-runner:
     container_name: r-runner
-    image: ghcr.io/${IMAGE_REPO:-owner}/r-runner:${IMAGE_TAG:-latest}
+    image: ${IMAGE_NAME:-ghcr.io/owner/r-runner:latest}
     env_file:
       - .env
     ports:
