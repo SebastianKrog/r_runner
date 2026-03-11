@@ -168,7 +168,20 @@ jobs:
           public_base_url="${PUBLIC_BASE_URL_SECRET:-}"
 
           if [ -z "$site_domain" ] && [ -n "$public_base_url" ]; then
-            site_domain="$(python -c 'import sys; from urllib.parse import urlparse; value=sys.argv[1].strip(); parsed=urlparse(value if "://" in value else f"https://{value}"); host=(parsed.netloc or parsed.path).split("/")[0]; print(host)' "$public_base_url")"
+            site_domain="$(python - "$public_base_url" <<"PY"
+import sys
+from urllib.parse import urlparse
+
+value = sys.argv[1].strip()
+if not value:
+    print("")
+    raise SystemExit(0)
+
+parsed = urlparse(value if "://" in value else f"https://{value}")
+host = parsed.netloc or parsed.path
+print(host.split("/")[0])
+PY
+)"
           fi
 
           if [ -z "$site_domain" ]; then
