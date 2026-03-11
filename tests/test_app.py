@@ -16,6 +16,15 @@ def test_health_endpoint():
     assert response.json() == {"ok": True}
 
 
+def test_privacy_page():
+    client = TestClient(app.app)
+    response = client.get("/privacy")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "Privacy Policy" in response.text
+
+
 def test_run_requires_auth():
     app.RUNNER_TOKEN = "secret"
     client = TestClient(app.app)

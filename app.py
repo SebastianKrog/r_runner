@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 
@@ -125,6 +126,68 @@ def run_script(payload: RunRequest, _: None = Depends(require_auth)) -> RunRespo
 def root() -> dict:
     return {
         "service": "r-runner",
-        "endpoints": ["GET /health", "POST /run"],
+        "endpoints": ["GET /", "GET /health", "GET /privacy", "POST /run"],
         "response_format": "JSON with stdout/stderr/exit_code and file artifacts",
     }
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy() -> str:
+    return """
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Policy - R Runner</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; margin: 2rem auto; max-width: 46rem; padding: 0 1rem; color: #222; }
+      h1, h2 { line-height: 1.25; }
+      code { background: #f6f8fa; padding: 0.1rem 0.3rem; border-radius: 4px; }
+      .muted { color: #555; }
+    </style>
+  </head>
+  <body>
+    <h1>Privacy Policy</h1>
+    <p class="muted">Last updated: 2026-03-11</p>
+
+    <p>
+      This service ("R Runner") executes R scripts sent by authorized clients and returns execution output.
+    </p>
+
+    <h2>What data is processed</h2>
+    <ul>
+      <li>R scripts you submit to <code>POST /run</code>.</li>
+      <li>Execution output such as <code>stdout</code>, <code>stderr</code>, and generated artifacts.</li>
+      <li>Basic request metadata needed to operate and secure the service (for example, timing and error logs).</li>
+    </ul>
+
+    <h2>How data is used</h2>
+    <p>
+      Submitted scripts are run in a temporary working directory for request processing. Temporary files are deleted
+      after execution completes or times out.
+    </p>
+
+    <h2>Data sharing</h2>
+    <p>
+      We do not sell your data. Data may be shared only with infrastructure providers required to host and operate
+      this service.
+    </p>
+
+    <h2>Security</h2>
+    <p>
+      Access to execution endpoints requires a bearer token. Please avoid submitting secrets unless strictly necessary.
+    </p>
+
+    <h2>Your responsibility</h2>
+    <p>
+      You are responsible for the content of submitted scripts and any data they process.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+      If you have privacy questions, contact the service operator for this deployment.
+    </p>
+  </body>
+</html>
+""".strip()
