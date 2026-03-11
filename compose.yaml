@@ -1,0 +1,9 @@
+services:
+  r-runner:
+    container_name: r-runner
+    image: ${IMAGE_NAME:-ghcr.io/owner/r-runner:latest}
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
