@@ -22,8 +22,10 @@ jobs:
         id: image
         run: |
           repo_lower="${GITHUB_REPOSITORY,,}"
-          echo "image_name=ghcr.io/${repo_lower}" >> "$GITHUB_OUTPUT"
-          echo "cache_image=ghcr.io/${repo_lower}:buildcache" >> "$GITHUB_OUTPUT"
+          echo "web_image=ghcr.io/${repo_lower}-web" >> "$GITHUB_OUTPUT"
+          echo "r_base_image=ghcr.io/${repo_lower}-r-base" >> "$GITHUB_OUTPUT"
+          echo "r_base_cache=ghcr.io/${repo_lower}:cache-r-base" >> "$GITHUB_OUTPUT"
+          echo "web_cache=ghcr.io/${repo_lower}:cache-web" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -35,43 +37,74 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Build image with shared cache
+      - name: Build R base image with shared cache
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile.r-base
           load: true
-          tags: ${{ steps.image.outputs.image_name }}:${{ github.sha }}
-          cache-from: type=registry,ref=${{ steps.image.outputs.cache_image }}
-          cache-to: type=registry,ref=${{ steps.image.outputs.cache_image }},mode=max
+          tags: ${{ steps.image.outputs.r_base_image }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ steps.image.outputs.r_base_cache }}
+          cache-to: type=registry,ref=${{ steps.image.outputs.r_base_cache }},mode=max
 
-      - name: Build image without cache export
+      - name: Build R base image without cache export
         if: github.event.pull_request.head.repo.full_name != github.repository
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile.r-base
           load: true
-          tags: ${{ steps.image.outputs.image_name }}:${{ github.sha }}
-          cache-from: type=registry,ref=${{ steps.image.outputs.cache_image }}
+          tags: ${{ steps.image.outputs.r_base_image }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ steps.image.outputs.r_base_cache }}
+
+      - name: Build web image with shared cache
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: ${{ steps.image.outputs.web_image }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ steps.image.outputs.web_cache }}
+          cache-to: type=registry,ref=${{ steps.image.outputs.web_cache }},mode=max
+
+      - name: Build web image without cache export
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: ${{ steps.image.outputs.web_image }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ steps.image.outputs.web_cache }}
 
       - name: Run startup check container
         run: |
           docker run -d --name "$CONTAINER_NAME" \
             -e RUNNER_TOKEN=ci-token \
+            -e RUNNER_SCRIPT_IMAGE=${{ steps.image.outputs.r_base_image }}:${{ github.sha }} \
+            -v /var/run/docker.sock:/var/run/docker.sock \
             -p 8000:8000 \
-            "${{ steps.image.outputs.image_name }}:${{ github.sha }}"
+            "${{ steps.image.outputs.web_image }}:${{ github.sha }}"
 
-          for i in {1..20}; do
+          for i in {1..30}; do
             if curl -fsS http://localhost:8000/health > /tmp/health.json; then
               break
             fi
             sleep 1
           done
 
+          curl -fsS -X POST http://localhost:8000/run \
+            -H 'Content-Type: application/json' \
+            -H 'Authorization: Bearer ci-token' \
+            -d '{"script":"cat(2+2)"}' > /tmp/run.json
+
           docker logs "$CONTAINER_NAME" | tee startup-check.log
           docker rm -f "$CONTAINER_NAME"
 
           grep -q '"ok":true' /tmp/health.json
+          grep -q '"success":true' /tmp/run.json
 
       - name: Upload startup logs on failure
         if: failure() && hashFiles('startup-check.log') != ''

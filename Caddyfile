@@ -1,4 +1,4 @@
-r.krogmaier.dk {
+{$SITE_DOMAIN} {
     encode gzip
     reverse_proxy r-runner:8000
 }

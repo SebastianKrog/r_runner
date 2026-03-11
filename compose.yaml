@@ -1,9 +1,14 @@
 services:
   r-runner:
     container_name: r-runner
-    image: ${IMAGE_NAME:-ghcr.io/owner/r-runner:latest}
+    image: ${WEB_IMAGE:-ghcr.io/owner/r-runner-web:latest}
     env_file:
       - .env
+    environment:
+      RUNNER_SCRIPT_IMAGE: ${SCRIPT_IMAGE:-ghcr.io/owner/r-runner-r-full:latest}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     expose:
       - "8000"
     restart: unless-stopped
@@ -11,6 +16,8 @@ services:
   caddy:
     container_name: r-runner-caddy
     image: caddy:2
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:-localhost}
     restart: unless-stopped
     depends_on:
       - r-runner

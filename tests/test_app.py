@@ -74,6 +74,7 @@ def test_run_script_success_with_artifacts(monkeypatch):
     client = TestClient(app.app)
 
     def fake_run(cmd, cwd, **kwargs):
+        assert cmd[:4] == [app.RUNNER_DOCKER_BIN, "run", "--rm", "--network"]
         Path(cwd, "result.txt").write_text("hello\n", encoding="utf-8")
         Path(cwd, "plot.png").write_bytes(b"\x89PNG\r\n\x1a\n")
         return Mock(returncode=0, stdout="ok\n", stderr="")
@@ -104,7 +105,7 @@ def test_run_script_timeout(monkeypatch):
     client = TestClient(app.app)
 
     def fake_run(*args, **kwargs):
-        raise subprocess.TimeoutExpired(cmd="Rscript", timeout=1)
+        raise subprocess.TimeoutExpired(cmd="docker run", timeout=1)
 
     monkeypatch.setattr(app.subprocess, "run", fake_run)
 
