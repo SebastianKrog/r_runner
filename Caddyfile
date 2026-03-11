@@ -1,0 +1,4 @@
+r.krogmaier.dk {
+    encode gzip
+    reverse_proxy r-runner:8000
+}

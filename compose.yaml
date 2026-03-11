@@ -4,6 +4,24 @@ services:
     image: ${IMAGE_NAME:-ghcr.io/owner/r-runner:latest}
     env_file:
       - .env
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     restart: unless-stopped
+
+  caddy:
+    container_name: r-runner-caddy
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - r-runner
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
