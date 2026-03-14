@@ -6,10 +6,12 @@ services:
       - .env
     environment:
       RUNNER_SCRIPT_IMAGE: ${SCRIPT_IMAGE:-ghcr.io/owner/r-runner-r-full:latest}
+      RUNNER_DOCKER_BIN: ${RUNNER_DOCKER_BIN:-/usr/bin/docker}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
       RUNNER_SHARED_DIR: ${RUNNER_SHARED_DIR:-/tmp/r-runner-shared}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker:ro
       - ${RUNNER_SHARED_DIR:-/tmp/r-runner-shared}:${RUNNER_SHARED_DIR:-/tmp/r-runner-shared}
     expose:
       - "8000"

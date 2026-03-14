@@ -50,6 +50,7 @@ docker run --rm -p 8000:8000 \
 RUNNER_TOKEN=replace-me
 WEB_IMAGE=ghcr.io/your-org/r-runner-web:latest
 SCRIPT_IMAGE=ghcr.io/your-org/r-runner-r-full:latest
+RUNNER_DOCKER_BIN=/usr/bin/docker
 SITE_DOMAIN=example.com
 PUBLIC_BASE_URL=example.com
 RUNNER_SHARED_DIR=/tmp/r-runner-shared
@@ -58,6 +59,7 @@ RUNNER_SHARED_DIR=/tmp/r-runner-shared
 - `SITE_DOMAIN` is used by Caddy to select the served host (defaults to `PUBLIC_BASE_URL` when unset).
 - `PUBLIC_BASE_URL` is used by FastAPI/OpenAPI server metadata (set host only, no scheme, when relying on it for `SITE_DOMAIN` fallback).
 - `RUNNER_SHARED_DIR` must be mounted at the same absolute path in the web container and host so script files are visible to Docker-launched runtime containers.
+- `/usr/bin/docker` is mounted read-only into the web container and used by `RUNNER_DOCKER_BIN` so `/run` can launch per-request runtime containers via the host Docker daemon.
 
 ## CI/CD behavior
 
