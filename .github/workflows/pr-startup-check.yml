@@ -37,8 +37,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      - name: Detect R image Dockerfile changes
+        id: r_changes
+        run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+            base_ref="${{ github.event.pull_request.base.sha }}"
+          else
+            base_ref="${{ github.event.pull_request.base.sha }}"
+          fi
+
+          r_base_changed=false
+          if git diff --name-only "$base_ref" "${{ github.sha }}" | grep -Eq '^Dockerfile\.r-base$'; then
+            r_base_changed=true
+          fi
+
+          if [ "$r_base_changed" = false ] && ! docker manifest inspect "${{ steps.image.outputs.r_base_image }}:latest" >/dev/null 2>&1; then
+            echo "No published R base image found; forcing rebuild."
+            r_base_changed=true
+          fi
+
+          echo "r_base_changed=$r_base_changed" >> "$GITHUB_OUTPUT"
+
       - name: Build R base image with shared cache
-        if: github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event.pull_request.head.repo.full_name == github.repository && steps.r_changes.outputs.r_base_changed == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -49,7 +71,7 @@ jobs:
           cache-to: type=registry,ref=${{ steps.image.outputs.r_base_cache }},mode=max
 
       - name: Build R base image without cache export
-        if: github.event.pull_request.head.repo.full_name != github.repository
+        if: github.event.pull_request.head.repo.full_name != github.repository && steps.r_changes.outputs.r_base_changed == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -57,6 +79,12 @@ jobs:
           load: true
           tags: ${{ steps.image.outputs.r_base_image }}:${{ github.sha }}
           cache-from: type=registry,ref=${{ steps.image.outputs.r_base_cache }}
+
+      - name: Reuse published R base image when unchanged
+        if: steps.r_changes.outputs.r_base_changed != 'true'
+        run: |
+          docker pull "${{ steps.image.outputs.r_base_image }}:latest"
+          docker tag "${{ steps.image.outputs.r_base_image }}:latest" "${{ steps.image.outputs.r_base_image }}:${{ github.sha }}"
 
       - name: Build web image with shared cache
         if: github.event.pull_request.head.repo.full_name == github.repository

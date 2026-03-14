@@ -43,6 +43,41 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      - name: Detect R image Dockerfile changes
+        id: r_changes
+        run: |
+          before_sha="${{ github.event.before }}"
+          if [ -z "$before_sha" ] || [ "$before_sha" = "0000000000000000000000000000000000000000" ]; then
+            before_sha="${{ github.sha }}^"
+          fi
+
+          if ! git cat-file -e "$before_sha^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=2 origin "${{ github.ref_name }}"
+          fi
+
+          r_full_changed=false
+          if git diff --name-only "$before_sha" "${{ github.sha }}" | grep -Eq '^Dockerfile\.r-full$'; then
+            r_full_changed=true
+          fi
+
+          r_base_changed=false
+          if git diff --name-only "$before_sha" "${{ github.sha }}" | grep -Eq '^Dockerfile\.r-base$'; then
+            r_base_changed=true
+          fi
+
+          if [ "$r_full_changed" = false ] && ! docker manifest inspect "${{ steps.image.outputs.r_full_image }}:latest" >/dev/null 2>&1; then
+            echo "No published full R image found; forcing rebuild."
+            r_full_changed=true
+          fi
+
+          if [ "$r_base_changed" = false ] && ! docker manifest inspect "${{ steps.image.outputs.r_base_image }}:latest" >/dev/null 2>&1; then
+            echo "No published base R image found; forcing rebuild."
+            r_base_changed=true
+          fi
+
+          echo "r_full_changed=$r_full_changed" >> "$GITHUB_OUTPUT"
+          echo "r_base_changed=$r_base_changed" >> "$GITHUB_OUTPUT"
+
       - name: Build web image
         uses: docker/build-push-action@v6
         with:
@@ -56,6 +91,7 @@ jobs:
           cache-to: type=registry,ref=${{ steps.image.outputs.web_cache }},mode=max
 
       - name: Build full R image
+        if: steps.r_changes.outputs.r_full_changed == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -68,6 +104,7 @@ jobs:
           cache-to: type=registry,ref=${{ steps.image.outputs.r_full_cache }},mode=max
 
       - name: Warm tiny R cache
+        if: steps.r_changes.outputs.r_base_changed == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -76,6 +113,18 @@ jobs:
           tags: ${{ steps.image.outputs.r_base_image }}:${{ github.sha }}
           cache-from: type=registry,ref=${{ steps.image.outputs.r_base_cache }}
           cache-to: type=registry,ref=${{ steps.image.outputs.r_base_cache }},mode=max
+
+      - name: Reuse published full R image when unchanged
+        if: steps.r_changes.outputs.r_full_changed != 'true'
+        run: |
+          docker pull "${{ steps.image.outputs.r_full_image }}:latest"
+          docker tag "${{ steps.image.outputs.r_full_image }}:latest" "${{ steps.image.outputs.r_full_image }}:${{ github.sha }}"
+
+      - name: Reuse published tiny R image when unchanged
+        if: steps.r_changes.outputs.r_base_changed != 'true'
+        run: |
+          docker pull "${{ steps.image.outputs.r_base_image }}:latest"
+          docker tag "${{ steps.image.outputs.r_base_image }}:latest" "${{ steps.image.outputs.r_base_image }}:${{ github.sha }}"
 
       - name: Run deployment-style check (web + full R image)
         run: |
