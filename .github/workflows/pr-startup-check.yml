@@ -47,11 +47,17 @@ jobs:
             base_ref="${{ github.event.pull_request.base.sha }}"
           fi
 
+          r_base_changed=false
           if git diff --name-only "$base_ref" "${{ github.sha }}" | grep -Eq '^Dockerfile\.r-base$'; then
-            echo "r_base_changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "r_base_changed=false" >> "$GITHUB_OUTPUT"
+            r_base_changed=true
           fi
+
+          if [ "$r_base_changed" = false ] && ! docker manifest inspect "${{ steps.image.outputs.r_base_image }}:latest" >/dev/null 2>&1; then
+            echo "No published R base image found; forcing rebuild."
+            r_base_changed=true
+          fi
+
+          echo "r_base_changed=$r_base_changed" >> "$GITHUB_OUTPUT"
 
       - name: Build R base image with shared cache
         if: github.event.pull_request.head.repo.full_name == github.repository && steps.r_changes.outputs.r_base_changed == 'true'
