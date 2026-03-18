@@ -196,11 +196,23 @@ def _run_docker_command(command: List[str], cwd: Path) -> subprocess.CompletedPr
 
 
 
+def _runtime_image_exists_locally(workdir_path: Path) -> bool:
+    command = [_resolve_docker_bin(), "image", "inspect", RUNNER_SCRIPT_IMAGE]
+    completed = _run_docker_command(command, cwd=workdir_path)
+    return completed.returncode == 0
+
+
+
 def _pull_runtime_image(workdir_path: Path) -> None:
     command = [_resolve_docker_bin(), "pull", RUNNER_SCRIPT_IMAGE]
     completed = _run_docker_command(command, cwd=workdir_path)
-    if completed.returncode != 0:
-        raise HTTPException(status_code=500, detail="Failed to pull runtime image")
+    if completed.returncode == 0:
+        return
+
+    if _runtime_image_exists_locally(workdir_path):
+        return
+
+    raise HTTPException(status_code=500, detail="Failed to pull runtime image")
 
 
 
