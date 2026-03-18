@@ -38,6 +38,16 @@ def test_system_packages_endpoint_missing_file(monkeypatch, tmp_path):
     assert response.json()["detail"] == "Package list is unavailable"
 
 
+def test_schema_endpoint():
+    client = TestClient(app.app)
+    response = client.get("/schema")
+
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+    assert '"title": "RunResponse"' in response.text
+    assert '"runtime_stderr"' in response.text
+
+
 def test_privacy_page():
     client = TestClient(app.app)
     response = client.get("/privacy")
@@ -76,10 +86,15 @@ def test_run_script_success_with_artifacts(monkeypatch):
     monkeypatch.setattr(app, "_resolve_docker_bin", lambda: app.RUNNER_DOCKER_BIN)
 
     def fake_run(cmd, cwd, **kwargs):
+        if cmd[1] == "pull":
+            return Mock(returncode=0, stdout="", stderr="pull warning\n")
+
         assert cmd[:4] == [app.RUNNER_DOCKER_BIN, "run", "--rm", "--network"]
+        Path(cwd, app.SCRIPT_STDOUT_NAME).write_text("ok\n", encoding="utf-8")
+        Path(cwd, app.SCRIPT_STDERR_NAME).write_text("script warning\n", encoding="utf-8")
         Path(cwd, "result.txt").write_text("hello\n", encoding="utf-8")
         Path(cwd, "plot.png").write_bytes(b"\x89PNG\r\n\x1a\n")
-        return Mock(returncode=0, stdout="ok\n", stderr="")
+        return Mock(returncode=0, stdout="", stderr="runtime warning\n")
 
     monkeypatch.setattr(app.subprocess, "run", fake_run)
 
@@ -94,12 +109,67 @@ def test_run_script_success_with_artifacts(monkeypatch):
     assert payload["success"] is True
     assert payload["exit_code"] == 0
     assert payload["stdout"] == "ok\n"
+    assert payload["stderr"] == "script warning\n"
+    assert payload["runtime_stderr"] == ""
 
     artifacts = {entry["filename"]: entry for entry in payload["artifacts"]}
     assert artifacts["result.txt"]["encoding"] == "utf-8"
     assert artifacts["result.txt"]["content"] == "hello\n"
     assert artifacts["plot.png"]["encoding"] == "base64"
     assert base64.b64decode(artifacts["plot.png"]["content"]) == b"\x89PNG\r\n\x1a\n"
+
+
+
+
+def test_run_script_returns_runtime_stderr_when_script_never_starts(monkeypatch):
+    app.RUNNER_TOKEN = "secret"
+    client = TestClient(app.app)
+
+    monkeypatch.setattr(app, "_resolve_docker_bin", lambda: app.RUNNER_DOCKER_BIN)
+
+    def fake_run(cmd, cwd, **kwargs):
+        if cmd[1] == "pull":
+            return Mock(returncode=0, stdout="", stderr="")
+
+        return Mock(returncode=125, stdout="", stderr="container runtime failed\n")
+
+    monkeypatch.setattr(app.subprocess, "run", fake_run)
+
+    response = client.post(
+        "/run",
+        headers={"Authorization": "Bearer secret"},
+        json={"script": "print('hello')"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["exit_code"] == 125
+    assert payload["stdout"] == ""
+    assert payload["stderr"] == ""
+    assert payload["runtime_stderr"] == "container runtime failed\n"
+
+
+def test_pull_runtime_image_returns_500_on_failure(monkeypatch):
+    app.RUNNER_TOKEN = "secret"
+    client = TestClient(app.app)
+
+    monkeypatch.setattr(app, "_resolve_docker_bin", lambda: app.RUNNER_DOCKER_BIN)
+
+    def fake_run(cmd, cwd, **kwargs):
+        assert cmd[1] == "pull"
+        return Mock(returncode=1, stdout="", stderr="pull failed\n")
+
+    monkeypatch.setattr(app.subprocess, "run", fake_run)
+
+    response = client.post(
+        "/run",
+        headers={"Authorization": "Bearer secret"},
+        json={"script": "print('hello')"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to pull runtime image"
 
 
 def test_run_script_timeout(monkeypatch):
