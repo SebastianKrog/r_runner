@@ -38,14 +38,29 @@ def test_system_packages_endpoint_missing_file(monkeypatch, tmp_path):
     assert response.json()["detail"] == "Package list is unavailable"
 
 
+def test_openapi_server_url_uses_https_for_bare_host(monkeypatch):
+    monkeypatch.setattr(app, "PUBLIC_BASE_URL", "example.com")
+
+    assert app._openapi_server_url() == "https://example.com"
+
+
+def test_openapi_server_url_preserves_absolute_url(monkeypatch):
+    monkeypatch.setattr(app, "PUBLIC_BASE_URL", "https://api.example.com/base")
+
+    assert app._openapi_server_url() == "https://api.example.com/base"
+
+
 def test_schema_endpoint():
     client = TestClient(app.app)
     response = client.get("/schema")
 
     assert response.status_code == 200
-    assert "text/plain" in response.headers["content-type"]
-    assert '"title": "RunResponse"' in response.text
-    assert '"runtime_stderr"' in response.text
+    assert "application/json" in response.headers["content-type"]
+    payload = response.json()
+    assert payload["openapi"] == "3.1.0"
+    assert payload["servers"] == [{"url": "http://localhost:8000"}]
+    assert "/run" in payload["paths"]
+    assert "post" in payload["paths"]["/run"]
 
 
 def test_privacy_page():

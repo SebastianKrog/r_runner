@@ -9,7 +9,10 @@ Token-protected web service that executes posted R scripts in **ephemeral Docker
 
 - `GET /health` → health probe
 - `GET /system` → package inventory metadata
+- `GET /schema` → full OpenAPI 3.1 document for GPT Actions/importers
 - `POST /run` → execute an R script
+
+`GET /schema` returns the full OpenAPI document for the service, including the top-level `servers` array expected by GPT Actions importers. The advertised server URL is always absolute: if `PUBLIC_BASE_URL` is already a full URL it is used as-is, otherwise the app prefixes it with `https://`.
 
 `POST /run` attempts to pre-pull the configured runtime image before launching the container, but it will continue with an already-cached local image if the pull fails transiently. Successful runs return only script `stdout`/`stderr`; non-fatal Docker warnings are suppressed from `runtime_stderr`, which is populated only when the runtime fails before the script starts.
 
@@ -59,7 +62,7 @@ RUNNER_SHARED_DIR=/tmp/r-runner-shared
 ```
 
 - `SITE_DOMAIN` is used by Caddy to select the served host (defaults to `PUBLIC_BASE_URL` when unset).
-- `PUBLIC_BASE_URL` is used by FastAPI/OpenAPI server metadata (set host only, no scheme, when relying on it for `SITE_DOMAIN` fallback).
+- `PUBLIC_BASE_URL` is used by FastAPI/OpenAPI server metadata. You may set either a full absolute URL (for example `https://api.example.com`) or a bare host/domain; bare hosts are normalized to `https://<host>` in the published OpenAPI `servers` entry.
 - `RUNNER_SHARED_DIR` must be mounted at the same absolute path in the web container and host so script files are visible to Docker-launched runtime containers.
 - `/usr/bin/docker` is mounted read-only into the web container and used by `RUNNER_DOCKER_BIN` so `/run` can launch per-request runtime containers via the host Docker daemon.
 
