@@ -1,4 +1,5 @@
 import base64
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import Mock
@@ -46,6 +47,13 @@ def test_schema_endpoint():
     assert "text/plain" in response.headers["content-type"]
     assert '"title": "RunResponse"' in response.text
     assert '"runtime_stderr"' in response.text
+
+
+def test_openapi_gpt_schema_uses_http_bearer_auth():
+    spec = json.loads(Path("openapi.gpt.json").read_text(encoding="utf-8"))
+
+    assert spec["paths"]["/run"]["post"]["security"] == [{"BearerAuth": []}]
+    assert spec["components"]["securitySchemes"]["BearerAuth"] == {"type": "http", "scheme": "bearer"}
 
 
 def test_privacy_page():
