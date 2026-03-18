@@ -150,15 +150,46 @@ def test_run_script_returns_runtime_stderr_when_script_never_starts(monkeypatch)
     assert payload["runtime_stderr"] == "container runtime failed\n"
 
 
-def test_pull_runtime_image_returns_500_on_failure(monkeypatch):
+def test_pull_runtime_image_uses_local_image_when_pull_fails(monkeypatch):
     app.RUNNER_TOKEN = "secret"
     client = TestClient(app.app)
 
     monkeypatch.setattr(app, "_resolve_docker_bin", lambda: app.RUNNER_DOCKER_BIN)
 
     def fake_run(cmd, cwd, **kwargs):
-        assert cmd[1] == "pull"
-        return Mock(returncode=1, stdout="", stderr="pull failed\n")
+        if cmd[1] == "pull":
+            return Mock(returncode=1, stdout="", stderr="pull failed\n")
+        if cmd[1:3] == ["image", "inspect"]:
+            return Mock(returncode=0, stdout="present\n", stderr="")
+
+        Path(cwd, app.SCRIPT_STDOUT_NAME).write_text("ok\n", encoding="utf-8")
+        Path(cwd, app.SCRIPT_STDERR_NAME).write_text("", encoding="utf-8")
+        return Mock(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(app.subprocess, "run", fake_run)
+
+    response = client.post(
+        "/run",
+        headers={"Authorization": "Bearer secret"},
+        json={"script": "print('hello')"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+
+def test_pull_runtime_image_returns_500_on_failure_without_local_image(monkeypatch):
+    app.RUNNER_TOKEN = "secret"
+    client = TestClient(app.app)
+
+    monkeypatch.setattr(app, "_resolve_docker_bin", lambda: app.RUNNER_DOCKER_BIN)
+
+    def fake_run(cmd, cwd, **kwargs):
+        if cmd[1] == "pull":
+            return Mock(returncode=1, stdout="", stderr="pull failed\n")
+        if cmd[1:3] == ["image", "inspect"]:
+            return Mock(returncode=1, stdout="", stderr="missing\n")
+        raise AssertionError(f"unexpected command: {cmd}")
 
     monkeypatch.setattr(app.subprocess, "run", fake_run)
 
