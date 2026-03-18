@@ -1,0 +1,186 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "R Runner API",
+    "description": "Authenticated API for running user-provided R scripts in an isolated execution environment and returning the resulting exit status, script console output, runtime diagnostics, and any generated files.",
+    "version": "v1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://r.krogmaier.dk"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "description": "If RunRScript fails, use this to check whether the service is reachable and able to accept requests.",
+        "operationId": "CheckRScriptHealth",
+        "deprecated": false,
+        "responses": {
+          "200": {
+            "description": "The service is available and responding normally.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/run": {
+      "post": {
+        "description": "Runs the supplied R script after pre-pulling the configured runtime image and returns the process outcome, exit code, captured script stdout/stderr, runtime stderr when the script fails to start, and any files produced during execution.",
+        "operationId": "RunRScript",
+        "x-openai-isConsequential": false,
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The request completed and the response contains the script result, including non-zero exit codes reported by the R process and runtime stderr only when the script could not start.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The request did not include a valid bearer token."
+          },
+          "408": {
+            "description": "Execution exceeded the allowed runtime and was stopped."
+          },
+          "413": {
+            "description": "The submitted script or one of the generated artifacts exceeded the configured size limit."
+          },
+          "500": {
+            "description": "The service could not process the request because of a server-side configuration, image-pull, or runtime error."
+          }
+        },
+        "deprecated": false
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "Indicates whether the service reports itself as healthy."
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "RunRequest": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The complete R source code to execute."
+          }
+        },
+        "required": [
+          "script"
+        ]
+      },
+      "Artifact": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "The filename assigned to the generated artifact."
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "The MIME type describing the artifact content."
+          },
+          "encoding": {
+            "type": "string",
+            "enum": [
+              "utf-8",
+              "base64"
+            ],
+            "description": "The encoding used for the artifact content field."
+          },
+          "content": {
+            "type": "string",
+            "description": "The artifact payload, represented either as plain UTF-8 text or as base64-encoded binary data, depending on the encoding field."
+          }
+        },
+        "required": [
+          "filename",
+          "mime_type",
+          "encoding",
+          "content"
+        ]
+      },
+      "RunResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "True when the R process exits with code 0; false when it exits with a non-zero code."
+          },
+          "exit_code": {
+            "type": "integer",
+            "description": "The exit status returned by the R process."
+          },
+          "stdout": {
+            "type": "string",
+            "description": "All text written to the script's standard output during execution."
+          },
+          "stderr": {
+            "type": "string",
+            "description": "All text written to the script's standard error during execution."
+          },
+          "runtime_stderr": {
+            "type": "string",
+            "description": "Container runtime diagnostics. Empty when the script started successfully, even if the runtime emitted non-fatal warnings while preparing the container."
+          },
+          "artifacts": {
+            "type": "array",
+            "description": "Files produced by the script and captured by the runner for inclusion in the response.",
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            }
+          }
+        },
+        "required": [
+          "success",
+          "exit_code",
+          "stdout",
+          "stderr",
+          "runtime_stderr",
+          "artifacts"
+        ]
+      }
+    }
+  }
+}

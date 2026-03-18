@@ -1,5 +1,6 @@
 import base64
 import hmac
+import json
 import mimetypes
 import os
 import shutil
@@ -10,7 +11,7 @@ from shutil import which
 from typing import List, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -26,6 +27,8 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000")
 RUNNER_SHARED_DIR = Path(os.getenv("RUNNER_SHARED_DIR", "/tmp/r-runner-shared"))
 
 SYSTEM_PACKAGES_PATH = Path(os.getenv("SYSTEM_PACKAGES_PATH", "/app/system/r-packages.txt"))
+SCRIPT_STDOUT_NAME = ".script.stdout"
+SCRIPT_STDERR_NAME = ".script.stderr"
 
 
 class SystemPackagesResponse(BaseModel):
@@ -62,8 +65,15 @@ class RunResponse(BaseModel):
         description="True when the R process exits with code 0; false when it exits with a non-zero code.",
     )
     exit_code: int = Field(..., description="The exit status returned by the R process.")
-    stdout: str = Field(..., description="All text written to standard output during execution.")
-    stderr: str = Field(..., description="All text written to standard error during execution.")
+    stdout: str = Field(..., description="All text written to the script's standard output during execution.")
+    stderr: str = Field(..., description="All text written to the script's standard error during execution.")
+    runtime_stderr: str = Field(
+        ...,
+        description=(
+            "Container runtime diagnostics. Empty when the script started successfully, even if the runtime emitted "
+            "non-fatal warnings while preparing the container."
+        ),
+    )
     artifacts: List[Artifact] = Field(
         ...,
         description="Files produced by the script and captured by the runner for inclusion in the response.",
@@ -121,11 +131,12 @@ def _encode_artifact(path: Path) -> Artifact:
         )
 
 
+
 def _collect_artifacts(workdir: Path) -> List[Artifact]:
-    files = [p for p in workdir.rglob("*") if p.is_file() and p.name != "script.R"]
+    ignored_names = {"script.R", SCRIPT_STDOUT_NAME, SCRIPT_STDERR_NAME}
+    files = [p for p in workdir.rglob("*") if p.is_file() and p.name not in ignored_names]
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return [_encode_artifact(path) for path in files[:MAX_ARTIFACT_COUNT]]
-
 
 
 
@@ -163,7 +174,6 @@ def _resolve_docker_bin() -> str:
 
 
 
-
 def _prepare_shared_workdir_root() -> Path:
     try:
         RUNNER_SHARED_DIR.mkdir(parents=True, exist_ok=True)
@@ -173,7 +183,35 @@ def _prepare_shared_workdir_root() -> Path:
     return RUNNER_SHARED_DIR
 
 
-def _run_script_in_container(script_path: Path, workdir_path: Path) -> subprocess.CompletedProcess[str]:
+
+def _run_docker_command(command: List[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=RUN_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+
+
+def _pull_runtime_image(workdir_path: Path) -> None:
+    command = [_resolve_docker_bin(), "pull", RUNNER_SCRIPT_IMAGE]
+    completed = _run_docker_command(command, cwd=workdir_path)
+    if completed.returncode != 0:
+        raise HTTPException(status_code=500, detail="Failed to pull runtime image")
+
+
+
+def _read_output(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+
+def _run_script_in_container(workdir_path: Path) -> subprocess.CompletedProcess[str]:
     command = [
         _resolve_docker_bin(),
         "run",
@@ -185,17 +223,11 @@ def _run_script_in_container(script_path: Path, workdir_path: Path) -> subproces
         "-w",
         "/workspace",
         RUNNER_SCRIPT_IMAGE,
-        "Rscript",
-        str(script_path),
+        "sh",
+        "-lc",
+        f"Rscript /workspace/script.R > /workspace/{SCRIPT_STDOUT_NAME} 2> /workspace/{SCRIPT_STDERR_NAME}",
     ]
-    return subprocess.run(
-        command,
-        cwd=workdir_path,
-        capture_output=True,
-        text=True,
-        timeout=RUN_TIMEOUT_SECONDS,
-        check=False,
-    )
+    return _run_docker_command(command, cwd=workdir_path)
 
 
 @app.get("/system", response_model=SystemPackagesResponse)
@@ -205,6 +237,13 @@ def system_packages() -> SystemPackagesResponse:
 
     packages = [line.strip() for line in SYSTEM_PACKAGES_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
     return SystemPackagesResponse(packages=packages)
+
+
+
+
+@app.get("/schema", response_class=PlainTextResponse)
+def schema() -> PlainTextResponse:
+    return PlainTextResponse(json.dumps(RunResponse.model_json_schema(), indent=2))
 
 
 @app.post("/run", response_model=RunResponse)
@@ -219,13 +258,18 @@ def run_script(payload: RunRequest, _: None = Depends(require_auth)) -> RunRespo
         script_path = workdir_path / "script.R"
         script_path.write_text(payload.script, encoding="utf-8")
 
-        completed = _run_script_in_container(script_path=Path("/workspace/script.R"), workdir_path=workdir_path)
+        _pull_runtime_image(workdir_path)
+        completed = _run_script_in_container(workdir_path=workdir_path)
+        stdout = _read_output(workdir_path / SCRIPT_STDOUT_NAME)
+        stderr = _read_output(workdir_path / SCRIPT_STDERR_NAME)
+        script_started = (workdir_path / SCRIPT_STDOUT_NAME).exists() or (workdir_path / SCRIPT_STDERR_NAME).exists()
         artifacts = _collect_artifacts(workdir_path)
         return RunResponse(
             success=completed.returncode == 0,
             exit_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            stdout=stdout,
+            stderr=stderr,
+            runtime_stderr="" if script_started else completed.stderr,
             artifacts=artifacts,
         )
     except subprocess.TimeoutExpired as exc:
@@ -238,8 +282,8 @@ def run_script(payload: RunRequest, _: None = Depends(require_auth)) -> RunRespo
 def root() -> dict:
     return {
         "service": "r-runner",
-        "endpoints": ["GET /", "GET /health", "GET /privacy", "GET /system", "POST /run"],
-        "response_format": "JSON with stdout/stderr/exit_code and file artifacts",
+        "endpoints": ["GET /", "GET /health", "GET /privacy", "GET /schema", "GET /system", "POST /run"],
+        "response_format": "JSON with stdout/stderr/runtime_stderr/exit_code and file artifacts",
     }
 
 

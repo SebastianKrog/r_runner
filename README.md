@@ -11,6 +11,8 @@ Token-protected web service that executes posted R scripts in **ephemeral Docker
 - `GET /system` → package inventory metadata
 - `POST /run` → execute an R script
 
+`POST /run` pre-pulls the configured runtime image before launching the container. Successful runs return only script `stdout`/`stderr`; non-fatal Docker warnings are suppressed from `runtime_stderr`, which is populated only when the runtime fails before the script starts.
+
 ## Auth
 
 Set `RUNNER_TOKEN` on the server and send:
