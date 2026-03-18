@@ -1,6 +1,5 @@
 import base64
 import hmac
-import json
 import mimetypes
 import os
 import shutil
@@ -11,7 +10,7 @@ from shutil import which
 from typing import List, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -29,6 +28,17 @@ RUNNER_SHARED_DIR = Path(os.getenv("RUNNER_SHARED_DIR", "/tmp/r-runner-shared"))
 SYSTEM_PACKAGES_PATH = Path(os.getenv("SYSTEM_PACKAGES_PATH", "/app/system/r-packages.txt"))
 SCRIPT_STDOUT_NAME = ".script.stdout"
 SCRIPT_STDERR_NAME = ".script.stderr"
+
+
+def _openapi_server_url() -> str:
+    base_url = PUBLIC_BASE_URL.strip()
+    if not base_url:
+        return "https://localhost"
+
+    if "://" in base_url:
+        return base_url
+
+    return f"https://{base_url}"
 
 
 class SystemPackagesResponse(BaseModel):
@@ -89,7 +99,7 @@ app = FastAPI(
         "output, and any generated files."
     ),
     version="v1.0.0",
-    servers=[{"url": PUBLIC_BASE_URL}],
+    servers=[{"url": _openapi_server_url()}],
 )
 
 bearer_scheme = HTTPBearer(scheme_name="BearerAuth", auto_error=False)
@@ -253,9 +263,9 @@ def system_packages() -> SystemPackagesResponse:
 
 
 
-@app.get("/schema", response_class=PlainTextResponse)
-def schema() -> PlainTextResponse:
-    return PlainTextResponse(json.dumps(RunResponse.model_json_schema(), indent=2))
+@app.get("/schema", response_class=JSONResponse)
+def schema() -> JSONResponse:
+    return JSONResponse(app.openapi())
 
 
 @app.post("/run", response_model=RunResponse)
