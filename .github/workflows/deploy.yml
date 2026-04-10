@@ -242,7 +242,9 @@ jobs:
           } > deploy.env
       - name: Copy runtime files to server
         run: |
-          scp -o StrictHostKeyChecking=accept-new compose.yaml Caddyfile deploy.env "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/r-runner/"
+          scp -o StrictHostKeyChecking=accept-new compose.yaml deploy.env "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/r-runner/"
+          ssh -o StrictHostKeyChecking=accept-new "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "rm -rf /opt/r-runner/deploy"
+          scp -o StrictHostKeyChecking=accept-new -r deploy "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/r-runner/"
           ssh -o StrictHostKeyChecking=accept-new "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "mv /opt/r-runner/deploy.env /opt/r-runner/.env"
 
       - name: Deploy on server
@@ -250,9 +252,16 @@ jobs:
           ssh -o StrictHostKeyChecking=accept-new "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
             set -e
             cd /opt/r-runner
-            SHARED_PROXY_NETWORK="${SHARED_PROXY_NETWORK:-shared-proxy}"
-            docker network inspect "$SHARED_PROXY_NETWORK" >/dev/null 2>&1 || docker network create "$SHARED_PROXY_NETWORK"
             docker compose -f compose.yaml pull
-            docker compose -f compose.yaml up -d --remove-orphans
+            SITE_DOMAIN="$(grep ^SITE_DOMAIN= .env | cut -d= -f2-)" ./deploy/bootstrap.sh
+            if ! docker ps -a --format "{{.Names}}" | grep -qx shared-caddy; then
+              SITE_DOMAIN="$(grep ^SITE_DOMAIN= .env | cut -d= -f2-)" ./deploy/bootstrap.sh
+            fi
+            if ! docker ps --format "{{.Names}}" | grep -qx shared-caddy; then
+              docker start shared-caddy >/dev/null
+            fi
+            docker ps --format "{{.Names}}" | grep -qx shared-caddy
+            docker exec shared-caddy test -f /etc/caddy/sites/r_runner.caddy
+            docker exec shared-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
             docker image prune -f
           '
