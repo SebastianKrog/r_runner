@@ -46,22 +46,46 @@ docker run --rm -p 8000:8000 \
 
 ## Docker Compose
 
-`compose.yaml` expects these values in `.env`:
+`compose.yaml` now contains only the `r-runner` app service and joins a shared external proxy network.
 
 ```env
 RUNNER_TOKEN=replace-me
 WEB_IMAGE=ghcr.io/your-org/r-runner-web:latest
 SCRIPT_IMAGE=ghcr.io/your-org/r-runner-r-full:latest
 RUNNER_DOCKER_BIN=/usr/bin/docker
-SITE_DOMAIN=example.com
 PUBLIC_BASE_URL=example.com
 RUNNER_SHARED_DIR=/tmp/r-runner-shared
+SHARED_PROXY_NETWORK=shared-proxy
+SITE_DOMAIN=example.com
 ```
 
-- `SITE_DOMAIN` is used by Caddy to select the served host (defaults to `PUBLIC_BASE_URL` when unset).
-- `PUBLIC_BASE_URL` is used by FastAPI/OpenAPI server metadata (set host only, no scheme, when relying on it for `SITE_DOMAIN` fallback).
 - `RUNNER_SHARED_DIR` must be mounted at the same absolute path in the web container and host so script files are visible to Docker-launched runtime containers.
 - `/usr/bin/docker` is mounted read-only into the web container and used by `RUNNER_DOCKER_BIN` so `/run` can launch per-request runtime containers via the host Docker daemon.
+- `SHARED_PROXY_NETWORK` must match other projects that attach to the shared Caddy.
+
+## Shared Caddy bootstrap
+
+Use `deploy/bootstrap.sh` to support either standalone startup or attaching to an already-running shared Caddy:
+
+```bash
+SITE_DOMAIN=r.example.com ./deploy/bootstrap.sh
+```
+
+What the script does:
+
+1. Ensures shared Docker resources exist (`shared-proxy`, `shared-caddy-data`, `shared-caddy-config`).
+2. Starts/updates the `r-runner` app service.
+3. Starts `shared-caddy` only if it is not already running.
+4. Copies this repo's route snippet into `/etc/caddy/sites/r_runner.caddy`.
+5. Reloads Caddy config via the admin API.
+
+To remove only this project's route and optionally stop shared Caddy when no routes remain:
+
+```bash
+./deploy/teardown.sh
+# optional
+STOP_SHARED_CADDY_IF_EMPTY=true ./deploy/teardown.sh
+```
 
 ## CI/CD behavior
 
@@ -81,4 +105,4 @@ RUNNER_SHARED_DIR=/tmp/r-runner-shared
 - `MAX_SCRIPT_BYTES` (default `500000`)
 - `MAX_ARTIFACT_COUNT` (default `10`)
 - `MAX_ARTIFACT_BYTES` (default `5000000` per artifact)
-- `SITE_DOMAIN` (used by Caddy; set in compose env)
+- `SITE_DOMAIN` (used by `deploy/bootstrap.sh` to render the route snippet)

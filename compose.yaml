@@ -16,26 +16,10 @@ services:
     expose:
       - "8000"
     restart: unless-stopped
+    networks:
+      - shared-proxy
 
-  caddy:
-    container_name: r-runner-caddy
-    image: caddy:2
-    environment:
-      SITE_DOMAIN: ${SITE_DOMAIN:-}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-localhost}
-    command: >
-      /bin/sh -c 'export SITE_DOMAIN="${SITE_DOMAIN:-$PUBLIC_BASE_URL}"; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
-    restart: unless-stopped
-    depends_on:
-      - r-runner
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-
-volumes:
-  caddy_data:
-  caddy_config:
+networks:
+  shared-proxy:
+    external: true
+    name: ${SHARED_PROXY_NETWORK:-shared-proxy}
