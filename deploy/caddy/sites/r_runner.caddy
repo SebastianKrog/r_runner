@@ -1,0 +1,4 @@
+__SITE_DOMAIN__ {
+    encode gzip
+    reverse_proxy r-runner:8000
+}
