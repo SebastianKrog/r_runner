@@ -6,11 +6,13 @@ APP_SERVICE="${APP_SERVICE:-r-runner}"
 SITE_FILE="${SITE_FILE:-deploy/caddy/sites/r_runner.caddy}"
 BASE_CADDYFILE="${BASE_CADDYFILE:-deploy/caddy/base/Caddyfile}"
 SITE_DOMAIN="${SITE_DOMAIN:-localhost}"
+COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml}"
 
 SHARED_CADDY_CONTAINER="${SHARED_CADDY_CONTAINER:-shared-caddy}"
 SHARED_PROXY_NETWORK="${SHARED_PROXY_NETWORK:-shared-proxy}"
 SHARED_CADDY_DATA_VOLUME="${SHARED_CADDY_DATA_VOLUME:-shared-caddy-data}"
 SHARED_CADDY_CONFIG_VOLUME="${SHARED_CADDY_CONFIG_VOLUME:-shared-caddy-config}"
+SHARED_CADDY_LOCK_FILE="${SHARED_CADDY_LOCK_FILE:-/tmp/shared-caddy-bootstrap.lock}"
 
 if [[ ! -f "$SITE_FILE" ]]; then
   echo "Site snippet not found: $SITE_FILE" >&2
@@ -22,12 +24,25 @@ if [[ ! -f "$BASE_CADDYFILE" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$COMPOSE_FILE" ]]; then
+  echo "Compose file not found: $COMPOSE_FILE" >&2
+  exit 1
+fi
+
+docker_compose() {
+  docker compose -f "$COMPOSE_FILE" "$@"
+}
+
+# Ensure the application container is up and attached to the shared proxy network.
+docker_compose up -d "$APP_SERVICE"
+
+# Serialize shared Caddy setup to avoid races when multiple projects deploy simultaneously.
+exec 9>"$SHARED_CADDY_LOCK_FILE"
+flock 9
+
 docker network inspect "$SHARED_PROXY_NETWORK" >/dev/null 2>&1 || docker network create "$SHARED_PROXY_NETWORK"
 docker volume inspect "$SHARED_CADDY_DATA_VOLUME" >/dev/null 2>&1 || docker volume create "$SHARED_CADDY_DATA_VOLUME"
 docker volume inspect "$SHARED_CADDY_CONFIG_VOLUME" >/dev/null 2>&1 || docker volume create "$SHARED_CADDY_CONFIG_VOLUME"
-
-# Ensure the application container is up and attached to the shared proxy network.
-docker compose up -d "$APP_SERVICE"
 
 if ! docker ps -a --format '{{.Names}}' | grep -qx "$SHARED_CADDY_CONTAINER"; then
   docker run -d \
@@ -35,7 +50,6 @@ if ! docker ps -a --format '{{.Names}}' | grep -qx "$SHARED_CADDY_CONTAINER"; th
     --network "$SHARED_PROXY_NETWORK" \
     -p 80:80 \
     -p 443:443 \
-    -p 2019:2019 \
     -v "$SHARED_CADDY_DATA_VOLUME:/data" \
     -v "$SHARED_CADDY_CONFIG_VOLUME:/etc/caddy" \
     caddy:2 \
@@ -54,6 +68,7 @@ sed "s|__SITE_DOMAIN__|${SITE_DOMAIN}|g" "$SITE_FILE" > "$TMP_SITE_FILE"
 docker cp "$TMP_SITE_FILE" "$SHARED_CADDY_CONTAINER:/etc/caddy/sites/${APP_NAME}.caddy"
 rm -f "$TMP_SITE_FILE"
 
+docker exec "$SHARED_CADDY_CONTAINER" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 docker exec "$SHARED_CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 
 echo "Bootstrap complete. ${APP_NAME} is registered in ${SHARED_CADDY_CONTAINER}."
