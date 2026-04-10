@@ -194,6 +194,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build
+    env:
+      SHARED_CADDY_BOOTSTRAP_VERSION: main-99ca08d
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -242,10 +244,9 @@ jobs:
           } > deploy.env
       - name: Copy runtime files to server
         run: |
-          scp -o StrictHostKeyChecking=accept-new compose.yaml deploy.env "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/r-runner/"
-          ssh -o StrictHostKeyChecking=accept-new "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "rm -rf /opt/r-runner/deploy"
-          scp -o StrictHostKeyChecking=accept-new -r deploy "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/r-runner/"
-          ssh -o StrictHostKeyChecking=accept-new "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "mv /opt/r-runner/deploy.env /opt/r-runner/.env"
+          ssh -o StrictHostKeyChecking=accept-new "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "mkdir -p /opt/r-runner/deploy/caddy/sites"
+          scp -o StrictHostKeyChecking=accept-new compose.yaml deploy.env deploy/caddy/sites/r_runner.caddy "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/r-runner/"
+          ssh -o StrictHostKeyChecking=accept-new "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "mv /opt/r-runner/r_runner.caddy /opt/r-runner/deploy/caddy/sites/r_runner.caddy && mv /opt/r-runner/deploy.env /opt/r-runner/.env"
 
       - name: Deploy on server
         run: |
@@ -253,6 +254,22 @@ jobs:
             set -e
             cd /opt/r-runner
             docker compose -f compose.yaml pull
-            SITE_DOMAIN="$(grep ^SITE_DOMAIN= .env | cut -d= -f2-)" COMPOSE_FILE=compose.yaml ./deploy/bootstrap.sh
+
+            bootstrap_version="${{ env.SHARED_CADDY_BOOTSTRAP_VERSION }}"
+            bootstrap_tmp_dir="$(mktemp -d /tmp/shared-caddy-bootstrap.XXXXXX)"
+            bootstrap_tarball="${bootstrap_tmp_dir}/shared-caddy-bootstrap-${bootstrap_version}.tar.gz"
+            bootstrap_url="https://github.com/SebastianKrog/shared-caddy-bootstrap/releases/download/${bootstrap_version}/shared-caddy-bootstrap-${bootstrap_version}.tar.gz"
+            trap "rm -rf \"${bootstrap_tmp_dir}\"" EXIT
+
+            curl -fsSL "$bootstrap_url" -o "$bootstrap_tarball"
+            tar -xzf "$bootstrap_tarball" -C "$bootstrap_tmp_dir"
+
+            SITE_DOMAIN="$(grep ^SITE_DOMAIN= .env | cut -d= -f2-)" \
+            APP_NAME=r_runner \
+            APP_SERVICE=r-runner \
+            COMPOSE_FILE=compose.yaml \
+            SITE_FILE=deploy/caddy/sites/r_runner.caddy \
+            "$bootstrap_tmp_dir/bin/bootstrap.sh"
+
             docker image prune -f
           '

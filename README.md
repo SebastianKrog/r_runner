@@ -65,27 +65,9 @@ SITE_DOMAIN=example.com
 
 ## Shared Caddy bootstrap
 
-Use `deploy/bootstrap.sh` to support either standalone startup or attaching to an already-running shared Caddy:
+This repo keeps only app-specific Caddy assets for `r_runner`, including `deploy/caddy/sites/r_runner.caddy`.
 
-```bash
-SITE_DOMAIN=r.example.com ./deploy/bootstrap.sh
-```
-
-What the script does:
-
-1. Ensures shared Docker resources exist (`shared-proxy`, `shared-caddy-data`, `shared-caddy-config`).
-2. Starts/updates the `r-runner` app service.
-3. Starts `shared-caddy` only if it is not already running.
-4. Copies this repo's route snippet into `/etc/caddy/sites/r_runner.caddy`.
-5. Reloads Caddy config via the admin API.
-
-To remove only this project's route and optionally stop shared Caddy when no routes remain:
-
-```bash
-./deploy/teardown.sh
-# optional
-STOP_SHARED_CADDY_IF_EMPTY=true ./deploy/teardown.sh
-```
+The shared bootstrap implementation is consumed during deploy from a pinned release tarball of `SebastianKrog/shared-caddy-bootstrap`; this repo no longer ships shared bootstrap scripts.
 
 ## CI/CD behavior
 
@@ -105,4 +87,4 @@ STOP_SHARED_CADDY_IF_EMPTY=true ./deploy/teardown.sh
 - `MAX_SCRIPT_BYTES` (default `500000`)
 - `MAX_ARTIFACT_COUNT` (default `10`)
 - `MAX_ARTIFACT_BYTES` (default `5000000` per artifact)
-- `SITE_DOMAIN` (used by `deploy/bootstrap.sh` to render the route snippet)
+- `SITE_DOMAIN` (used during deploy to render the route snippet via shared bootstrap)
