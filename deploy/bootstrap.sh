@@ -33,6 +33,9 @@ docker_compose() {
   docker compose -f "$COMPOSE_FILE" "$@"
 }
 
+# Ensure the shared proxy network exists before bringing up the app service.
+docker network inspect "$SHARED_PROXY_NETWORK" >/dev/null 2>&1 || docker network create "$SHARED_PROXY_NETWORK"
+
 # Ensure the application container is up and attached to the shared proxy network.
 docker_compose up -d "$APP_SERVICE"
 
@@ -40,7 +43,6 @@ docker_compose up -d "$APP_SERVICE"
 exec 9>"$SHARED_CADDY_LOCK_FILE"
 flock 9
 
-docker network inspect "$SHARED_PROXY_NETWORK" >/dev/null 2>&1 || docker network create "$SHARED_PROXY_NETWORK"
 docker volume inspect "$SHARED_CADDY_DATA_VOLUME" >/dev/null 2>&1 || docker volume create "$SHARED_CADDY_DATA_VOLUME"
 docker volume inspect "$SHARED_CADDY_CONFIG_VOLUME" >/dev/null 2>&1 || docker volume create "$SHARED_CADDY_CONFIG_VOLUME"
 
