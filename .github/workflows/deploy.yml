@@ -262,7 +262,7 @@ jobs:
             trap "rm -rf \"${bootstrap_tmp_dir}\"" EXIT
 
             curl -fsSL "$bootstrap_url" -o "$bootstrap_tarball"
-            tar -xzf "$bootstrap_tarball" -C "$bootstrap_tmp_dir"
+            tar -xzf "$bootstrap_tarball" -C "$bootstrap_tmp_dir" --strip-components=1
 
             SITE_DOMAIN="$(grep ^SITE_DOMAIN= .env | cut -d= -f2-)" \
             APP_NAME=r_runner \
