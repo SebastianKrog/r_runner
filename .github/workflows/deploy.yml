@@ -250,6 +250,8 @@ jobs:
           ssh -o StrictHostKeyChecking=accept-new "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
             set -e
             cd /opt/r-runner
+            SHARED_PROXY_NETWORK="${SHARED_PROXY_NETWORK:-shared-proxy}"
+            docker network inspect "$SHARED_PROXY_NETWORK" >/dev/null 2>&1 || docker network create "$SHARED_PROXY_NETWORK"
             docker compose -f compose.yaml pull
             docker compose -f compose.yaml up -d --remove-orphans
             docker image prune -f
